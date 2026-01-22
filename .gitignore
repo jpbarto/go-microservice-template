@@ -20,6 +20,9 @@ go.work
 # Binary output
 goserv
 
+# CA bundle with certificates (including Netskope)
+.ca-bundle.pem
+
 # IDE
 .idea/
 .vscode/
