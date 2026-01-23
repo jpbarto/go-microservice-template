@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy any private certs to the container's trust store and update the CA certificates
-COPY certs/*.cr[t] /usr/local/share/ca-certificates/
+COPY .certs/*.cr[t] /usr/local/share/ca-certificates/
 RUN update-ca-certificates
 
 WORKDIR /app

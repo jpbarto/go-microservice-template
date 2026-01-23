@@ -22,6 +22,7 @@ goserv
 
 # CA bundle with certificates (including Netskope)
 .ca-bundle.pem
+.certs/
 
 # IDE
 .idea/
