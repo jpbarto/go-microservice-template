@@ -7,25 +7,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy your local CA bundle that already includes Netskope cert (using wildcard makes it optional)
-# This is the same bundle your local Go uses
-COPY .ca-bundle.pe[m] /etc/ssl/certs/ca-bundle.pem
-
-# Verify the bundle was copied and set environment to use it
-RUN ls -lh /etc/ssl/certs/ca-bundle.pem && \
-    echo "CA bundle size:" && wc -l /etc/ssl/certs/ca-bundle.pem
-
-# Set environment to use the CA bundle
-ENV SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.pem \
-    GIT_SSL_CAINFO=/etc/ssl/certs/ca-bundle.pem
+# Copy any private certs to the container's trust store and update the CA certificates
+COPY certs/*.cr[t] /usr/local/share/ca-certificates/
+RUN update-ca-certificates
 
 WORKDIR /app
 
 # Copy go mod files
 COPY src/go.mod src/go.sum* ./
 
-# Download dependencies - explicitly set the cert file inline to ensure it's used
-RUN SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.pem go mod download
+# Download dependencies
+RUN go mod download
 
 # Copy source code
 COPY src/ .
