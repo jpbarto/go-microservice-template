@@ -14,13 +14,13 @@ import (
 
 type Goserv struct{}
 
-// Build executes the build.sh script to build the goserv container image
+// Build builds the Docker image using build.sh script with Docker-in-Docker
 func (m *Goserv) Build(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Container registry to push the image to
+	// Container registry to push to (e.g., docker.io/username)
 	registry string,
 	// +optional
 	// Image tag (default: latest)
@@ -30,15 +30,62 @@ func (m *Goserv) Build(
 		tag = "latest"
 	}
 
-	output, err := m.getBaseContainer(source).
-		WithExec([]string{"sh", "-c", "./cicd/build.sh"}).
+	// Start a Docker engine service
+	dockerEngine := dag.Container().
+		From("docker:dind").
+		WithMountedCache("/var/lib/docker", dag.CacheVolume("docker-lib")).
+		WithExposedPort(2375).
+		WithExec([]string{
+			"dockerd",
+			"--host=tcp://0.0.0.0:2375",
+			"--host=unix:///var/run/docker.sock",
+			"--tls=false",
+		}, dagger.ContainerWithExecOpts{
+			InsecureRootCapabilities: true,
+		}).
+		AsService()
+
+	// Build environment variables for the script
+	buildEnv := fmt.Sprintf("TAG=%s", tag)
+	if registry != "" {
+		buildEnv = fmt.Sprintf("REGISTRY=%s TAG=%s", registry, tag)
+	}
+
+	// Use the Docker engine service in our build container
+	output, err := getBaseContainer(source).
+		WithServiceBinding("docker", dockerEngine).
+		WithEnvVariable("DOCKER_HOST", "tcp://docker:2375").
+		WithExec([]string{"sh", "-c", buildEnv + " ./cicd/build.sh"}).
 		Stdout(ctx)
 
 	if err != nil {
-		return "", fmt.Errorf("build failed: %w", err)
+		return "", err
 	}
 
 	return output, nil
+}
+
+// BuildAndPublish is an alias for Build that includes publishing logic via the build.sh script
+func (m *Goserv) BuildAndPublish(
+	ctx context.Context,
+	// Source directory containing the project
+	source *dagger.Directory,
+	// +optional
+	// Container registry to push the image to (e.g., "docker.io/myorg")
+	registry string,
+	// +optional
+	// Image tag (default: latest)
+	tag string,
+	// +optional
+	// Whether to push the image to the registry
+	push bool,
+) (string, error) {
+	// The build.sh script handles pushing if REGISTRY is set
+	// Set PUSH=true environment variable to enable pushing
+	if push && registry != "" {
+		return m.Build(ctx, source, registry, tag)
+	}
+	return m.Build(ctx, source, "", tag)
 }
 
 // UnitTest executes the unit_test.sh script to run unit tests
@@ -47,7 +94,7 @@ func (m *Goserv) UnitTest(
 	// Source directory containing the project
 	source *dagger.Directory,
 ) (string, error) {
-	output, err := m.getBaseContainer(source).
+	output, err := getBaseContainer(source).
 		WithExec([]string{"sh", "-c", "./cicd/unit_test.sh"}).
 		Stdout(ctx)
 
@@ -67,7 +114,7 @@ func (m *Goserv) IntegrationTest(
 	// Kubernetes context to use for testing
 	kubeContext string,
 ) (string, error) {
-	container := m.getBaseContainer(source)
+	container := getBaseContainer(source)
 
 	if kubeContext != "" {
 		container = container.WithEnvVariable("KUBE_CONTEXT", kubeContext)
@@ -90,7 +137,7 @@ func (m *Goserv) Validate(
 	// Source directory containing the project
 	source *dagger.Directory,
 ) (string, error) {
-	output, err := m.getBaseContainer(source).
+	output, err := getBaseContainer(source).
 		WithExec([]string{"sh", "-c", "./cicd/validate.sh"}).
 		Stdout(ctx)
 
@@ -122,7 +169,7 @@ func (m *Goserv) Deploy(
 		namespace = "default"
 	}
 
-	container := m.getBaseContainer(source).
+	container := getBaseContainer(source).
 		WithEnvVariable("ENVIRONMENT", environment).
 		WithEnvVariable("NAMESPACE", namespace).
 		WithEnvVariable("IMAGE_TAG", imageTag)
@@ -150,7 +197,7 @@ func (m *Goserv) Deliver(
 	// Release notes
 	releaseNotes string,
 ) (string, error) {
-	container := m.getBaseContainer(source)
+	container := getBaseContainer(source)
 
 	if version != "" {
 		container = container.WithEnvVariable("VERSION", version)
@@ -228,7 +275,7 @@ func (m *Goserv) Pipeline(
 }
 
 // getBaseContainer returns a base container with necessary tools installed
-func (m *Goserv) getBaseContainer(source *dagger.Directory) *dagger.Container {
+func getBaseContainer(source *dagger.Directory) *dagger.Container {
 	return dag.Container().
 		From("golang:1.21-bookworm").
 		WithExec([]string{"apt-get", "update"}).

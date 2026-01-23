@@ -55,30 +55,34 @@ This repository uses [Dagger](https://dagger.io) for CI/CD automation. All CI/CD
 - **Dagger Functions** (`main.go`): Go-based Dagger module that orchestrates the pipeline
 - **Shell Scripts**: Individual scripts for each pipeline stage (build, test, validate, deploy, deliver)
 
-### Available Dagger Functions
+### Running Dagger Commands
+
+All Dagger commands must be run from the **repository root** and reference the `cicd` module using the `-m cicd` flag:
 
 ```bash
 # Build the container image
-dagger call build --source=.
+dagger -m cicd call build --source=.
 
 # Run unit tests
-dagger call unit-test --source=.
+dagger -m cicd call unit-test --source=.
 
 # Run integration tests
-dagger call integration-test --source=.
+dagger -m cicd call integration-test --source=.
 
 # Validate the build and configuration
-dagger call validate --source=.
+dagger -m cicd call validate --source=.
 
 # Deploy to Kubernetes
-dagger call deploy --source=. --environment=dev --namespace=default --image-tag=latest
+dagger -m cicd call deploy --source=. --environment=dev --namespace=default --image-tag=latest
 
 # Deliver/release the application
-dagger call deliver --source=. --version=v1.0.0
+dagger -m cicd call deliver --source=. --version=v1.0.0
 
 # Run the complete CI/CD pipeline
-dagger call pipeline --source=. --environment=dev --tag=latest
+dagger -m cicd call pipeline --source=. --environment=dev --tag=latest
 ```
+
+**Note:** The `-m cicd` flag tells Dagger where to find the module (the `cicd/` directory containing `dagger.json` and `main.go`). The `--source=.` parameter passes the repository root as the source directory to the Dagger functions.
 
 The Dagger functions invoke the corresponding shell scripts in the `cicd/` directory, providing a consistent and reproducible build/test/deploy process across local development and CI environments.
 
