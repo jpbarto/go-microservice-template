@@ -14,6 +14,7 @@ A containerized Go microservice that responds to HTTP requests with service meta
 - **Configurable Dependency**: Call an external service and include its response headers
 - **Container Ready**: Multi-stage Docker build for minimal image size
 - **Kubernetes Deployment**: Full Helm chart with configurable values
+- **CI/CD Pipeline**: Dagger-based CI/CD automation for build, test, and deployment
 
 ## Project Structure
 
@@ -23,6 +24,14 @@ A containerized Go microservice that responds to HTTP requests with service meta
 │   ├── main.go             # Go application code
 │   ├── go.mod              # Go module definition
 │   └── go.sum              # Go module checksums
+├── cicd/
+│   ├── main.go             # Dagger CI/CD functions
+│   ├── build.sh            # Build script
+│   ├── unit_test.sh        # Unit test script
+│   ├── integration_test.sh # Integration test script
+│   ├── validate.sh         # Validation script
+│   ├── deploy.sh           # Deployment script
+│   └── deliver.sh          # Delivery script
 ├── Dockerfile              # Multi-stage Docker build
 ├── .dockerignore           # Docker build exclusions
 ├── .gitignore              # Git exclusions
@@ -39,12 +48,47 @@ A containerized Go microservice that responds to HTTP requests with service meta
             └── hpa.yaml
 ```
 
+## CI/CD Pipeline
+
+This repository uses [Dagger](https://dagger.io) for CI/CD automation. All CI/CD logic is contained within the `cicd/` directory, which includes:
+
+- **Dagger Functions** (`main.go`): Go-based Dagger module that orchestrates the pipeline
+- **Shell Scripts**: Individual scripts for each pipeline stage (build, test, validate, deploy, deliver)
+
+### Available Dagger Functions
+
+```bash
+# Build the container image
+dagger call build --source=.
+
+# Run unit tests
+dagger call unit-test --source=.
+
+# Run integration tests
+dagger call integration-test --source=.
+
+# Validate the build and configuration
+dagger call validate --source=.
+
+# Deploy to Kubernetes
+dagger call deploy --source=. --environment=dev --namespace=default --image-tag=latest
+
+# Deliver/release the application
+dagger call deliver --source=. --version=v1.0.0
+
+# Run the complete CI/CD pipeline
+dagger call pipeline --source=. --environment=dev --tag=latest
+```
+
+The Dagger functions invoke the corresponding shell scripts in the `cicd/` directory, providing a consistent and reproducible build/test/deploy process across local development and CI environments.
+
 ## Prerequisites
 
 - Go 1.21+ (for local development)
 - Docker (for building container images)
 - Kubernetes cluster (for deployment)
 - Helm 3+ (for deployment)
+- Dagger CLI (for running CI/CD pipelines locally)
 
 ## Local Development
 
