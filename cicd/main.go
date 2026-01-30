@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"strings"
+
 	"dagger/goserv/internal/dagger"
 )
 
@@ -49,7 +51,7 @@ func (m *Goserv) Build(
 	if tag == "" {
 		versionContent, err := source.File("VERSION").Contents(ctx)
 		if err == nil {
-			tag = versionContent
+			tag = strings.TrimSpace(versionContent)
 		} else {
 			tag = "latest"
 		}
@@ -107,21 +109,27 @@ func (m *Goserv) Deliver(
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Image tag (default: latest)
+	// Image tag (default: reads from VERSION file)
 	tag string,
 ) (string, error) {
+	// Read version from VERSION file if tag not provided
 	if tag == "" {
-		tag = "latest"
+		versionContent, err := source.File("VERSION").Contents(ctx)
+		if err == nil {
+			tag = strings.TrimSpace(versionContent)
+		} else {
+			tag = "latest"
+		}
 	}
 
-	// Build the application container
+	// Build the application container with the version tag
 	container, err := m.Build(ctx, source, tag)
 	if err != nil {
 		return "", err
 	}
 
 	// Publish to ttl.sh (anonymous registry with automatic expiration)
-	// ttl.sh images expire after a set time (default 24 hours)
+	// Format: ttl.sh/goserv-version:1h (combines version tag with expiration)
 	imageRef := "ttl.sh/goserv-" + tag + ":1h"
 
 	address, err := container.Publish(ctx, imageRef)
