@@ -25,34 +25,26 @@ A containerized Go microservice that responds to HTTP requests with service meta
 │   ├── go.mod              # Go module definition
 │   └── go.sum              # Go module checksums
 ├── cicd/
-│   ├── main.go             # Dagger CI/CD functions
-│   ├── build.sh            # Build script
-│   ├── unit_test.sh        # Unit test script
-│   ├── integration_test.sh # Integration test script
-│   ├── validate.sh         # Validation script
-│   ├── deploy.sh           # Deployment script
-│   └── deliver.sh          # Delivery script
+│   ├── main.go             # Dagger CI/CD module with build, test, and delivery functions
+│   ├── dagger.json         # Dagger module configuration
+│   ├── go.mod              # Dagger module dependencies
+│   └── internal/           # Generated Dagger SDK code
 ├── hooks/
 │   ├── pre-commit          # Git hook to sync VERSION to Helm chart
 │   ├── install.sh          # Script to install Git hooks
 │   └── README.md           # Documentation for Git hooks
 ├── tests/
-│   └── unit_test.sh        # Unit test script for goserv endpoints
+│   └── unit_test.sh        # Automated unit test script for goserv endpoints
+├── helm/
+│   └── goserv/
+│       ├── Chart.yaml      # Helm chart metadata
+│       ├── values.yaml     # Default configuration values
+│       └── templates/      # Kubernetes resource templates
 ├── VERSION                 # Single source of truth for version number
-├── Dockerfile              # Multi-stage Docker build
+├── Dockerfile              # Multi-stage Docker build with version injection
 ├── .dockerignore           # Docker build exclusions
 ├── .gitignore              # Git exclusions
-└── helm/
-    └── goserv/
-        ├── Chart.yaml      # Helm chart metadata
-        ├── values.yaml     # Default configuration values
-        └── templates/      # Kubernetes resource templates
-            ├── _helpers.tpl
-            ├── deployment.yaml
-            ├── service.yaml
-            ├── serviceaccount.yaml
-            ├── ingress.yaml
-            └── hpa.yaml
+└── README.md               # This file
 ```
 
 ## Version Management
@@ -81,28 +73,74 @@ See `hooks/README.md` for more details.
 
 ## CI/CD Pipeline
 
-This repository uses [Dagger](https://dagger.io) for CI/CD automation. All CI/CD logic is contained within the `cicd/` directory, which includes:
+This repository uses [Dagger](https://dagger.io) for CI/CD automation. The `cicd/` directory contains a Dagger module written in Go that provides functions for building, testing, and delivering the application.
 
-- **Dagger Functions** (`main.go`): Go-based Dagger module that orchestrates the pipeline
-- **Shell Scripts**: Individual scripts for each pipeline stage (build, test, validate, deploy, deliver)
+### Available Dagger Functions
+
+- **`build`**: Builds the Docker image using the Dockerfile, automatically reading version from VERSION file
+- **`unit-test`**: Runs the goserv container and executes automated tests against it
+- **`deliver`**: Publishes the container image to ttl.sh registry (temporary registry for testing)
+
+### Prerequisites for Dagger
+
+1. **Install Dagger CLI**: Follow [Dagger installation guide](https://docs.dagger.io/install)
+2. **Corporate Proxy Setup** (if behind Netskope or similar): 
+   - Add certificates to `~/Library/Application Support/dagger/ca-certificates` (macOS) or `/etc/dagger/certs` (Linux)
+   - Restart the Dagger engine: `docker restart $(docker ps -q --filter name=dagger-engine)`
+   - See [Dagger custom CA documentation](https://docs.dagger.io/reference/configuration/custom-ca/)
 
 ### Running Dagger Commands
 
-> Note: To get Dagger to work with the Visa Netskope proxy you will need to add the Visa certificates to `~/Library/Application Support/dagger/ca-certificates` and restart the Dagger Engine which may already be running in Docker. For more see https://docs.dagger.io/reference/configuration/custom-ca/
-
-All Dagger commands must be run from the **repository root** and reference the `cicd` module using the `-m cicd` flag:
+All Dagger commands must be run from the **repository root** with the `-m cicd` flag:
 
 ```bash
-# Build the container image
+# Build the container image (automatically uses version from VERSION file)
 dagger -m cicd call build --source=.
 
-# Run unit tests
+# Build with specific version tag
+dagger -m cicd call build --source=. --tag="1.2.3"
+
+# Run unit tests (builds and tests the application)
 dagger -m cicd call unit-test --source=.
+
+# Deliver to ttl.sh registry (publishes for 1 hour)
+dagger -m cicd call deliver --source=.
+
+# Deliver with specific tag
+dagger -m cicd call deliver --source=. --tag="v1.0.0"
 ```
 
-**Note:** The `-m cicd` flag tells Dagger where to find the module (the `cicd/` directory containing `dagger.json` and `main.go`). The `--source=.` parameter passes the repository root as the source directory to the Dagger functions.
+### Exporting Built Images
 
-The Dagger functions invoke the corresponding shell scripts in the `cicd/` directory, providing a consistent and reproducible build/test/deploy process across local development and CI environments.
+To save a built image locally:
+
+```bash
+# Export to Docker
+dagger -m cicd call build --source=. export --path=/tmp/goserv.tar
+
+# Load into Docker
+docker load < /tmp/goserv.tar
+```
+
+### CI/CD Integration
+
+The Dagger functions can be called from any CI/CD system that has Docker available:
+
+**GitHub Actions example:**
+```yaml
+- name: Build
+  run: dagger -m cicd call build --source=.
+  
+- name: Test
+  run: dagger -m cicd call unit-test --source=.
+```
+
+**GitLab CI example:**
+```yaml
+build:
+  script:
+    - dagger -m cicd call build --source=.
+```
 
 ## Prerequisites
 
@@ -156,9 +194,28 @@ go run main.go
 
 ## Build Container Image
 
+### Using Dagger (Recommended)
+
 ```bash
-# Build the Docker image
-docker build -t goserv:latest .
+# Build using Dagger (automatically uses VERSION file)
+dagger -m cicd call build --source=.
+
+# Build with specific version
+dagger -m cicd call build --source=. --tag="1.2.3"
+
+# Export to local Docker
+dagger -m cicd call build --source=. export --path=/tmp/goserv.tar
+docker load < /tmp/goserv.tar
+```
+
+### Using Docker Directly
+
+```bash
+# Build with version from VERSION file
+docker build --build-arg VERSION=$(cat VERSION) -t goserv:$(cat VERSION) .
+
+# Build with specific version
+docker build --build-arg VERSION=1.0.0 -t goserv:1.0.0 .
 
 # Test the container locally
 docker run -p 8080:8080 goserv:latest
@@ -166,10 +223,48 @@ docker run -p 8080:8080 goserv:latest
 # With environment variables
 docker run -p 8080:8080 \
   -e SERVICE_NAME="my-service" \
-  -e SERVICE_VERSION="2.0.0" \
   -e DEPENDENCY_URL="https://httpbin.org/headers" \
   goserv:latest
 ```
+
+## Running Tests
+
+### Automated Testing with Dagger
+
+```bash
+# Run all unit tests (builds container and tests it)
+dagger -m cicd call unit-test --source=.
+```
+
+This will:
+1. Build the goserv container
+2. Start it as a service
+3. Run the test script (`tests/unit_test.sh`) against the running service
+4. Verify all endpoints and responses
+
+### Manual Testing
+
+If you have the application running locally or in Docker:
+
+```bash
+# Set test environment variables (optional)
+export TEST_HOST=localhost
+export TEST_PORT=8080
+
+# Run the test script
+./tests/unit_test.sh
+```
+
+The test script checks:
+- HTTP 200 response from root endpoint
+- Valid JSON response format
+- Presence of all required fields
+- Service name correctness
+- UUID format validation
+- UUID consistency across requests
+- Timestamp format (RFC3339)
+- Content-Type header
+- 404 for invalid paths
 
 ## Deploy to Kubernetes with Helm
 
@@ -315,20 +410,47 @@ curl http://localhost:8080/
 
 ## Complete Deployment Example
 
+### Using Dagger and Helm
+
+```bash
+# 1. Build and test with Dagger
+dagger -m cicd call build --source=.
+dagger -m cicd call unit-test --source=.
+
+# 2. Deliver to ttl.sh (temporary registry for testing)
+dagger -m cicd call deliver --source=. --tag="v1.0.0"
+
+# 3. Deploy with Helm using the published image
+helm install my-service ./helm/goserv \
+  --set image.repository="ttl.sh/goserv-v1.0.0" \
+  --set image.tag="1h" \
+  --set application.dependencyUrl="http://httpbin.default.svc.cluster.local/headers"
+
+# 4. Verify deployment
+kubectl get pods
+kubectl get svc
+
+# 5. Test the service
+kubectl port-forward svc/my-service-goserv 8080:80
+curl http://localhost:8080/
+```
+
+### Using Docker and Helm
+
 ```bash
 # 1. Build the image
-docker build -t goserv:v1.0.0 .
+docker build --build-arg VERSION=$(cat VERSION) -t goserv:$(cat VERSION) .
 
-# 2. Tag for your registry (if using a remote registry)
-docker tag goserv:v1.0.0 your-registry/goserv:v1.0.0
+# 2. Tag for your registry
+docker tag goserv:$(cat VERSION) your-registry/goserv:$(cat VERSION)
 
 # 3. Push to registry
-docker push your-registry/goserv:v1.0.0
+docker push your-registry/goserv:$(cat VERSION)
 
 # 4. Deploy with Helm
 helm install my-service ./helm/goserv \
   --set image.repository="your-registry/goserv" \
-  --set image.tag="v1.0.0" \
+  --set image.tag="$(cat VERSION)" \
   --set application.serviceName="my-service" \
   --set application.dependencyUrl="http://httpbin.default.svc.cluster.local/headers"
 
@@ -338,6 +460,25 @@ kubectl get svc
 
 # 6. Test the service
 kubectl port-forward svc/my-service-goserv 8080:80
+curl http://localhost:8080/
+```
+
+## Quick Start
+
+```bash
+# 1. Clone and setup
+git clone https://github.com/jpbarto/go-microservice-template.git
+cd go-microservice-template
+./hooks/install.sh  # Install Git hooks for version management
+
+# 2. Build and test
+dagger -m cicd call build --source=.
+dagger -m cicd call unit-test --source=.
+
+# 3. Run locally
+docker run -p 8080:8080 goserv:latest
+
+# 4. Test
 curl http://localhost:8080/
 ```
 
