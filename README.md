@@ -57,6 +57,8 @@ This repository uses [Dagger](https://dagger.io) for CI/CD automation. All CI/CD
 
 ### Running Dagger Commands
 
+> Note: To get Dagger to work with the Visa Netskope proxy you will need to add the Visa certificates to `~/Library/Application Support/dagger/ca-certificates` and restart the Dagger Engine which may already be running in Docker. For more see https://docs.dagger.io/reference/configuration/custom-ca/
+
 All Dagger commands must be run from the **repository root** and reference the `cicd` module using the `-m cicd` flag:
 
 ```bash
