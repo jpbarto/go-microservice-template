@@ -31,6 +31,7 @@ type Response struct {
 var (
 	config       Config
 	instanceUUID string
+	version      = "dev" // Set via ldflags at build time
 )
 
 func init() {
@@ -40,7 +41,7 @@ func init() {
 	// Load configuration from environment variables
 	config = Config{
 		ServiceName:    getEnv("SERVICE_NAME", "goserv"),
-		ServiceVersion: getEnv("SERVICE_VERSION", "1.0.0"),
+		ServiceVersion: getEnv("SERVICE_VERSION", version),
 		DependencyURL:  getEnv("DEPENDENCY_URL", ""),
 		Port:           getEnv("PORT", "8080"),
 	}

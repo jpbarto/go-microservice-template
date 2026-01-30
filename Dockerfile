@@ -1,6 +1,9 @@
 # Build stage
 FROM golang:1.21-bookworm AS builder
 
+# Build argument for version
+ARG VERSION=dev
+
 # Install ca-certificates and git
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -22,8 +25,8 @@ RUN go mod download
 # Copy source code
 COPY src/ .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o goserv .
+# Build the application with version
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=${VERSION}" -o goserv .
 
 # Runtime stage
 FROM debian:bookworm-slim

@@ -42,15 +42,25 @@ func (m *Goserv) Build(
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Image tag (default: latest)
+	// Image tag (default: reads from VERSION file)
 	tag string,
 ) (*dagger.Container, error) {
+	// Read version from VERSION file if tag not provided
 	if tag == "" {
-		tag = "latest"
+		versionContent, err := source.File("VERSION").Contents(ctx)
+		if err == nil {
+			tag = versionContent
+		} else {
+			tag = "latest"
+		}
 	}
 
-	// Build the container using the Dockerfile in the source directory
-	container := source.DockerBuild()
+	// Build the container with VERSION as build arg
+	container := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
+		BuildArgs: []dagger.BuildArg{
+			{Name: "VERSION", Value: tag},
+		},
+	})
 
 	return container, nil
 }
@@ -89,4 +99,35 @@ func (m *Goserv) UnitTest(
 	}
 
 	return testOutput, nil
+}
+
+// Deliver publishes the goserv container to ttl.sh registry
+func (m *Goserv) Deliver(
+	ctx context.Context,
+	// Source directory containing the project
+	source *dagger.Directory,
+	// +optional
+	// Image tag (default: latest)
+	tag string,
+) (string, error) {
+	if tag == "" {
+		tag = "latest"
+	}
+
+	// Build the application container
+	container, err := m.Build(ctx, source, tag)
+	if err != nil {
+		return "", err
+	}
+
+	// Publish to ttl.sh (anonymous registry with automatic expiration)
+	// ttl.sh images expire after a set time (default 24 hours)
+	imageRef := "ttl.sh/goserv-" + tag + ":1h"
+
+	address, err := container.Publish(ctx, imageRef)
+	if err != nil {
+		return "", err
+	}
+
+	return address, nil
 }

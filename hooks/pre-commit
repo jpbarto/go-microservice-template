@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# Pre-commit hook to sync VERSION file to Helm Chart.yaml
+
+VERSION_FILE="VERSION"
+CHART_FILE="helm/goserv/Chart.yaml"
+
+# Check if VERSION file is being committed
+if git diff --cached --name-only | grep -q "^${VERSION_FILE}$"; then
+    echo "VERSION file changed, updating Helm chart..."
+    
+    # Read the new version
+    if [ -f "$VERSION_FILE" ]; then
+        NEW_VERSION=$(cat "$VERSION_FILE" | tr -d '\n' | tr -d ' ')
+        
+        # Update the Helm Chart.yaml appVersion
+        if [ -f "$CHART_FILE" ]; then
+            # Use sed to update appVersion (compatible with both macOS and Linux)
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                # macOS
+                sed -i '' "s/^appVersion: .*/appVersion: \"${NEW_VERSION}\"/" "$CHART_FILE"
+            else
+                # Linux
+                sed -i "s/^appVersion: .*/appVersion: \"${NEW_VERSION}\"/" "$CHART_FILE"
+            fi
+            
+            # Stage the updated Chart.yaml
+            git add "$CHART_FILE"
+            
+            echo "✓ Updated ${CHART_FILE} appVersion to ${NEW_VERSION}"
+        else
+            echo "Warning: ${CHART_FILE} not found"
+        fi
+    else
+        echo "Warning: ${VERSION_FILE} not found"
+    fi
+fi
+
+exit 0

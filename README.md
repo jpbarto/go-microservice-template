@@ -32,6 +32,13 @@ A containerized Go microservice that responds to HTTP requests with service meta
 │   ├── validate.sh         # Validation script
 │   ├── deploy.sh           # Deployment script
 │   └── deliver.sh          # Delivery script
+├── hooks/
+│   ├── pre-commit          # Git hook to sync VERSION to Helm chart
+│   ├── install.sh          # Script to install Git hooks
+│   └── README.md           # Documentation for Git hooks
+├── tests/
+│   └── unit_test.sh        # Unit test script for goserv endpoints
+├── VERSION                 # Single source of truth for version number
 ├── Dockerfile              # Multi-stage Docker build
 ├── .dockerignore           # Docker build exclusions
 ├── .gitignore              # Git exclusions
@@ -47,6 +54,30 @@ A containerized Go microservice that responds to HTTP requests with service meta
             ├── ingress.yaml
             └── hpa.yaml
 ```
+
+## Version Management
+
+This project uses a `VERSION` file as the single source of truth for version numbering. The version flows through:
+
+- **Go application**: Injected at build time via `-ldflags`
+- **Docker image**: Passed as `VERSION` build argument
+- **Helm chart**: Automatically synced via Git hook
+- **Dagger builds**: Reads from VERSION file
+
+### Git Hooks
+
+The `hooks/` directory contains Git hooks that automate version management:
+
+**Installation:**
+```bash
+./hooks/install.sh
+```
+
+**What it does:**
+- When you commit a change to the `VERSION` file, the pre-commit hook automatically updates the `appVersion` in `helm/goserv/Chart.yaml` to match
+- This ensures version consistency across the Go code, Docker images, and Helm charts without manual updates
+
+See `hooks/README.md` for more details.
 
 ## CI/CD Pipeline
 
@@ -67,21 +98,6 @@ dagger -m cicd call build --source=.
 
 # Run unit tests
 dagger -m cicd call unit-test --source=.
-
-# Run integration tests
-dagger -m cicd call integration-test --source=.
-
-# Validate the build and configuration
-dagger -m cicd call validate --source=.
-
-# Deploy to Kubernetes
-dagger -m cicd call deploy --source=. --environment=dev --namespace=default --image-tag=latest
-
-# Deliver/release the application
-dagger -m cicd call deliver --source=. --version=v1.0.0
-
-# Run the complete CI/CD pipeline
-dagger -m cicd call pipeline --source=. --environment=dev --tag=latest
 ```
 
 **Note:** The `-m cicd` flag tells Dagger where to find the module (the `cicd/` directory containing `dagger.json` and `main.go`). The `--source=.` parameter passes the repository root as the source directory to the Dagger functions.
