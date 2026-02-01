@@ -2,6 +2,42 @@
 
 A containerized Go microservice that responds to HTTP requests with service metadata and dependency information, deployed using Helm.
 
+## Table of Contents
+
+- [Features](#features)
+- [Project Structure](#project-structure)
+- [Version Management](#version-management)
+  - [Git Hooks](#git-hooks)
+- [CI/CD Pipeline](#cicd-pipeline)
+  - [Available Dagger Functions](#available-dagger-functions)
+  - [Prerequisites for Dagger](#prerequisites-for-dagger)
+  - [Running Dagger Commands](#running-dagger-commands)
+  - [Exporting Built Images](#exporting-built-images)
+  - [CI/CD Integration](#cicd-integration)
+- [Prerequisites](#prerequisites)
+- [Local Development](#local-development)
+  - [Run Locally](#run-locally)
+  - [Test the Service](#test-the-service)
+  - [Environment Variables](#environment-variables)
+- [Build Container Image](#build-container-image)
+  - [Using Dagger (Recommended)](#using-dagger-recommended)
+  - [Using Docker Directly](#using-docker-directly)
+- [Running Tests](#running-tests)
+  - [Automated Testing with Dagger](#automated-testing-with-dagger)
+  - [Manual Testing](#manual-testing)
+- [Deploy to Kubernetes with Helm](#deploy-to-kubernetes-with-helm)
+  - [Install the Chart](#install-the-chart)
+  - [Upgrade the Release](#upgrade-the-release)
+  - [Uninstall the Release](#uninstall-the-release)
+- [Helm Configuration](#helm-configuration)
+- [API Response Example](#api-response-example)
+- [Testing in Kubernetes](#testing-in-kubernetes)
+- [Complete Deployment Example](#complete-deployment-example)
+  - [Using Dagger and Helm](#using-dagger-and-helm)
+  - [Using Docker and Helm](#using-docker-and-helm)
+- [Quick Start](#quick-start)
+- [License](#license)
+
 ## Features
 
 - **HTTP JSON API**: Responds to GET requests on `/` with:
@@ -78,8 +114,13 @@ This repository uses [Dagger](https://dagger.io) for CI/CD automation. The `cicd
 ### Available Dagger Functions
 
 - **`build`**: Builds the Docker image using the Dockerfile, automatically reading version from VERSION file
+  - `--release-candidate`: Optional boolean flag to append "-rc" suffix to version for release candidate builds
 - **`unit-test`**: Runs the goserv container and executes automated tests against it
 - **`deliver`**: Publishes the container image to ttl.sh registry (temporary registry for testing)
+  - `--release-candidate`: Optional boolean flag to build and publish release candidate version
+- **`deploy`**: Deploys the application to a Kubernetes cluster using Helm
+  - Requires kubeconfig secret for cluster authentication
+  - Configurable release name, namespace, and image settings
 
 ### Prerequisites for Dagger
 
@@ -97,8 +138,8 @@ All Dagger commands must be run from the **repository root** with the `-m cicd` 
 # Build the container image (automatically uses version from VERSION file)
 dagger -m cicd call build --source=.
 
-# Build with specific version tag
-dagger -m cicd call build --source=. --tag="1.2.3"
+# Build as release candidate (appends -rc to version)
+dagger -m cicd call build --source=. --release-candidate=true
 
 # Run unit tests (builds and tests the application)
 dagger -m cicd call unit-test --source=.
@@ -106,8 +147,15 @@ dagger -m cicd call unit-test --source=.
 # Deliver to ttl.sh registry (publishes for 1 hour)
 dagger -m cicd call deliver --source=.
 
-# Deliver with specific tag
-dagger -m cicd call deliver --source=. --tag="v1.0.0"
+# Deliver release candidate version
+dagger -m cicd call deliver --source=. --release-candidate=true
+
+# Deploy to Kubernetes cluster (requires kubeconfig)
+dagger -m cicd call deploy \
+  --source=. \
+  --kubeconfig=file:~/.kube/config \
+  --release-name=my-service \
+  --namespace=default
 ```
 
 ### Exporting Built Images
@@ -200,11 +248,11 @@ go run main.go
 # Build using Dagger (automatically uses VERSION file)
 dagger -m cicd call build --source=.
 
-# Build with specific version
-dagger -m cicd call build --source=. --tag="1.2.3"
+# Build as release candidate (appends -rc to version)
+dagger -m cicd call build --source=. --release-candidate=true
 
-# Export to local Docker
-dagger -m cicd call build --source=. export --path=/tmp/goserv.tar
+# Export to local Docker (note: use container-export for the full command)
+dagger -m cicd call build --source=. container export --path=/tmp/goserv.tar
 docker load < /tmp/goserv.tar
 ```
 
@@ -418,11 +466,20 @@ dagger -m cicd call build --source=.
 dagger -m cicd call unit-test --source=.
 
 # 2. Deliver to ttl.sh (temporary registry for testing)
-dagger -m cicd call deliver --source=. --tag="v1.0.0"
+# This automatically reads version from VERSION file
+dagger -m cicd call deliver --source=.
 
-# 3. Deploy with Helm using the published image
+# 3. Option A: Deploy using Dagger Deploy function
+dagger -m cicd call deploy \
+  --source=. \
+  --kubeconfig=file:~/.kube/config \
+  --release-name=my-service \
+  --namespace=default
+
+# 3. Option B: Deploy with Helm manually using the published image
+# Note: ttl.sh images expire after 1 hour by default
 helm install my-service ./helm/goserv \
-  --set image.repository="ttl.sh/goserv-v1.0.0" \
+  --set image.repository="ttl.sh/goserv-$(cat VERSION)" \
   --set image.tag="1h" \
   --set application.dependencyUrl="http://httpbin.default.svc.cluster.local/headers"
 
