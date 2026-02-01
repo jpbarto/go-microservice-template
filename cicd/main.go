@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"dagger/goserv/internal/dagger"
@@ -28,33 +29,26 @@ func (m *Goserv) ContainerEcho(stringArg string) *dagger.Container {
 	return dag.Container().From("alpine:latest").WithExec([]string{"echo", stringArg})
 }
 
-// Returns lines that match a pattern in the files of the provided Directory
-func (m *Goserv) GrepDir(ctx context.Context, directoryArg *dagger.Directory, pattern string) (string, error) {
-	return dag.Container().
-		From("alpine:latest").
-		WithMountedDirectory("/mnt", directoryArg).
-		WithWorkdir("/mnt").
-		WithExec([]string{"grep", "-R", pattern, "."}).
-		Stdout(ctx)
-}
-
 // Build builds the Docker image using the Dockerfile in the project directory
 func (m *Goserv) Build(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Image tag (default: reads from VERSION file)
-	tag string,
+	// Whether to build as release candidate (appends -rc to version)
+	releaseCandidate bool,
 ) (*dagger.Container, error) {
-	// Read version from VERSION file if tag not provided
-	if tag == "" {
-		versionContent, err := source.File("VERSION").Contents(ctx)
-		if err == nil {
-			tag = strings.TrimSpace(versionContent)
-		} else {
-			tag = "latest"
-		}
+	// Read version from VERSION file
+	versionContent, err := source.File("VERSION").Contents(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	tag := strings.TrimSpace(versionContent)
+
+	// Append -rc if this is a release candidate
+	if releaseCandidate {
+		tag = tag + "-rc"
 	}
 
 	// Build the container with VERSION as build arg
@@ -74,7 +68,7 @@ func (m *Goserv) UnitTest(
 	source *dagger.Directory,
 ) (string, error) {
 	// Build the application container
-	appContainer, err := m.Build(ctx, source, "latest")
+	appContainer, err := m.Build(ctx, source, false)
 	if err != nil {
 		return "", err
 	}
@@ -89,11 +83,11 @@ func (m *Goserv) UnitTest(
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{"apt-get", "install", "-y", "bash", "curl", "jq"}).
-		WithMountedDirectory("/tests", source.Directory("tests")).
+		WithMountedDirectory("/workspace", source).
 		WithServiceBinding("goserv", appService).
 		WithEnvVariable("TEST_HOST", "goserv").
 		WithEnvVariable("TEST_PORT", "8080").
-		WithExec([]string{"bash", "/tests/unit_test.sh"}).
+		WithExec([]string{"bash", "/workspace/tests/unit_test.sh"}).
 		Stdout(ctx)
 
 	if err != nil {
@@ -109,21 +103,23 @@ func (m *Goserv) Deliver(
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Image tag (default: reads from VERSION file)
-	tag string,
+	// Build as release candidate (appends -rc to version tag)
+	releaseCandidate bool,
 ) (string, error) {
-	// Read version from VERSION file if tag not provided
-	if tag == "" {
-		versionContent, err := source.File("VERSION").Contents(ctx)
-		if err == nil {
-			tag = strings.TrimSpace(versionContent)
-		} else {
-			tag = "latest"
-		}
+	// Read version from VERSION file
+	versionContent, err := source.File("VERSION").Contents(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to read VERSION file: %w", err)
+	}
+	tag := strings.TrimSpace(versionContent)
+
+	// Append -rc suffix for release candidates
+	if releaseCandidate {
+		tag = tag + "-rc"
 	}
 
 	// Build the application container with the version tag
-	container, err := m.Build(ctx, source, tag)
+	container, err := m.Build(ctx, source, releaseCandidate)
 	if err != nil {
 		return "", err
 	}
@@ -138,4 +134,72 @@ func (m *Goserv) Deliver(
 	}
 
 	return address, nil
+}
+
+// Deploy installs the Helm chart to a Kubernetes cluster
+func (m *Goserv) Deploy(
+	ctx context.Context,
+	// Source directory containing the project
+	source *dagger.Directory,
+	// Kubernetes config file content
+	kubeconfig *dagger.Secret,
+	// +optional
+	// Release name (default: goserv)
+	releaseName string,
+	// +optional
+	// Kubernetes namespace (default: default)
+	namespace string,
+	// +optional
+	// Image repository (default: ttl.sh/goserv)
+	imageRepository string,
+	// +optional
+	// Image tag (default: reads from VERSION file)
+	imageTag string,
+) (string, error) {
+	if releaseName == "" {
+		releaseName = "goserv"
+	}
+	if namespace == "" {
+		namespace = "goserv"
+	}
+	if imageRepository == "" {
+		imageRepository = "ttl.sh/goserv-latest"
+		versionContent, err := source.File("VERSION").Contents(ctx)
+		if err == nil {
+			imageRepository = "ttl.sh/goserv-" + strings.TrimSpace(versionContent)
+		}
+	}
+	if imageTag == "" {
+		imageTag = "1h"
+	}
+
+	// Create a container with kubectl and helm installed
+	output, err := dag.Container().
+		From("debian:bookworm-slim").
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "curl", "gnupg", "apt-transport-https"}).
+		WithExec([]string{"sh", "-c", "curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null"}).
+		WithExec([]string{"sh", "-c", "echo \"deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main\" | tee /etc/apt/sources.list.d/helm-stable-debian.list"}).
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "helm"}).
+		WithSecretVariable("KUBECONFIG_CONTENT", kubeconfig).
+		WithExec([]string{"sh", "-c", "mkdir -p /root/.kube && echo \"$KUBECONFIG_CONTENT\" > /root/.kube/config"}).
+		WithMountedDirectory("/workspace", source).
+		WithWorkdir("/workspace").
+		WithExec([]string{
+			"helm", "upgrade", "--install", releaseName,
+			"./helm/goserv",
+			"--namespace", namespace,
+			"--create-namespace",
+			"--set", "image.repository=" + imageRepository,
+			"--set", "image.tag=" + imageTag,
+			"--wait",
+		}).
+		Stdout(ctx)
+
+	if err != nil {
+		return "", err
+	}
+
+	return output, nil
 }

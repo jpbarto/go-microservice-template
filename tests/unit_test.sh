@@ -136,6 +136,38 @@ test_service_name_value() {
     fi
 }
 
+# Test 4a: Check if service_version matches VERSION file
+test_service_version_matches_file() {
+    local response
+    response=$(curl -s -m $TIMEOUT "${BASE_URL}/")
+    local service_version=$(echo "$response" | jq -r '.service_version')
+    
+    # Determine the path to VERSION file
+    # Get the directory where the script is located
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local version_file=""
+    
+    if [ -f "/workspace/VERSION" ]; then
+        # Running in Dagger container
+        version_file="/workspace/VERSION"
+    elif [ -f "${script_dir}/../VERSION" ]; then
+        # Running locally - VERSION is in parent of script directory
+        version_file="${script_dir}/../VERSION"
+    else
+        print_test_result "Service version matches VERSION file" "FAIL" "Could not find VERSION file"
+        return
+    fi
+    
+    # Read VERSION file from project root
+    local expected_version=$(cat "$version_file" | tr -d '\n\r ')
+    
+    if [ "$service_version" = "$expected_version" ]; then
+        print_test_result "Service version matches VERSION file (${expected_version})" "PASS"
+    else
+        print_test_result "Service version matches VERSION file" "FAIL" "Expected: $expected_version, Got: $service_version"
+    fi
+}
+
 # Test 5: Check if instance_uuid is valid UUID format
 test_instance_uuid_format() {
     local response
@@ -223,6 +255,7 @@ main() {
     test_response_is_json
     test_response_contains_required_fields
     test_service_name_value
+    test_service_version_matches_file
     test_instance_uuid_format
     test_instance_uuid_consistency
     test_timestamp_format
