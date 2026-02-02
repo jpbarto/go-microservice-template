@@ -34,6 +34,10 @@ HELM_REPOSITORY="oci://ttl.sh"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --pipeline-trigger=*)
+            PIPELINE_TRIGGER="${1#*=}"
+            shift
+            ;;
         --pipeline-trigger)
             PIPELINE_TRIGGER="$2"
             shift 2
@@ -46,9 +50,17 @@ while [[ $# -gt 0 ]]; do
             SKIP_TESTS=true
             shift
             ;;
+        --container-repository=*)
+            CONTAINER_REPOSITORY="${1#*=}"
+            shift
+            ;;
         --container-repository)
             CONTAINER_REPOSITORY="$2"
             shift 2
+            ;;
+        --helm-repository=*)
+            HELM_REPOSITORY="${1#*=}"
+            shift
             ;;
         --helm-repository)
             HELM_REPOSITORY="$2"
