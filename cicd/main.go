@@ -110,6 +110,45 @@ func (m *Goserv) UnitTest(
 	return testOutput, nil
 }
 
+// IntegrationTest runs integration tests against a deployed goserv instance
+func (m *Goserv) IntegrationTest(
+	ctx context.Context,
+	// Source directory containing the project
+	source *dagger.Directory,
+	// Target host where goserv is deployed
+	targetHost string,
+	// +optional
+	// Target port (default: 8080)
+	targetPort string,
+) (string, error) {
+	if targetPort == "" {
+		targetPort = "8080"
+	}
+
+	// Run the integration test script in a container with k6 and other dependencies
+	// The integration_test.sh script will call performance_test.sh and acceptance_test.sh
+	testOutput, err := dag.Container().
+		From("debian:bookworm-slim").
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "bash", "curl", "jq", "ca-certificates", "gnupg"}).
+		WithExec([]string{"sh", "-c", "curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor | tee /usr/share/keyrings/k6-archive-keyring.gpg > /dev/null"}).
+		WithExec([]string{"sh", "-c", "echo \"deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main\" | tee /etc/apt/sources.list.d/k6.list"}).
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "k6"}).
+		WithMountedDirectory("/workspace", source).
+		WithWorkdir("/workspace").
+		WithEnvVariable("TEST_HOST", targetHost).
+		WithEnvVariable("TEST_PORT", targetPort).
+		WithExec([]string{"bash", "/workspace/tests/integration_test.sh", targetHost, targetPort}).
+		Stdout(ctx)
+
+	if err != nil {
+		return "", err
+	}
+
+	return testOutput, nil
+}
+
 // Deliver publishes the goserv container and Helm chart to repositories
 func (m *Goserv) Deliver(
 	ctx context.Context,
