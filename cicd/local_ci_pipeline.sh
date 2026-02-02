@@ -7,9 +7,9 @@
 # it would run in GitHub Actions, GitLab CI, or CodeFresh.
 #
 # Usage:
-#   ./local_ci_pipeline.sh --pipeline-type=branch    # Branch commit (build + test)
-#   ./local_ci_pipeline.sh --pipeline-type=pr        # PR merge (build + test + deliver)
-#   ./local_ci_pipeline.sh --release-candidate       # Build as release candidate
+#   ./local_ci_pipeline.sh --pipeline-trigger=commit    # Branch commit (build + test)
+#   ./local_ci_pipeline.sh --pipeline-trigger=pr-merge  # PR merge (build + test + deliver)
+#   ./local_ci_pipeline.sh --release-candidate          # Build as release candidate
 ################################################################################
 
 set -e  # Exit on error
@@ -26,7 +26,7 @@ NC='\033[0m' # No Color
 # Default configuration
 RELEASE_CANDIDATE=false
 SKIP_TESTS=false
-PIPELINE_TYPE="branch"
+PIPELINE_TRIGGER="commit"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTAINER_REPOSITORY="ttl.sh"
 HELM_REPOSITORY="oci://ttl.sh"
@@ -34,8 +34,8 @@ HELM_REPOSITORY="oci://ttl.sh"
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --pipeline-type)
-            PIPELINE_TYPE="$2"
+        --pipeline-trigger)
+            PIPELINE_TRIGGER="$2"
             shift 2
             ;;
         --release-candidate|-rc)
@@ -58,16 +58,16 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --pipeline-type <type>      Pipeline type: 'branch' (default) or 'pr'"
+            echo "  --pipeline-trigger <type>   Pipeline trigger: 'commit' (default) or 'pr-merge'"
             echo "  --release-candidate, -rc    Build as release candidate (appends -rc to version)"
             echo "  --skip-tests                Skip unit tests"
             echo "  --container-repository      Container repository (default: ttl.sh)"
             echo "  --helm-repository           Helm repository (default: oci://ttl.sh)"
             echo "  --help, -h                  Show this help message"
             echo ""
-            echo "Pipeline Types:"
-            echo "  branch  - Simulates branch commit (Build + UnitTest)"
-            echo "  pr      - Simulates PR merge (Build + UnitTest + Deliver)"
+            echo "Pipeline Triggers:"
+            echo "  commit   - Simulates branch commit (Build + UnitTest)"
+            echo "  pr-merge - Simulates PR merge (Build + UnitTest + Deliver)"
             exit 0
             ;;
         *)
@@ -78,10 +78,10 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate pipeline type
-if [ "$PIPELINE_TYPE" != "branch" ] && [ "$PIPELINE_TYPE" != "pr" ]; then
-    echo -e "${RED}Error: Invalid pipeline type '${PIPELINE_TYPE}'${NC}"
-    echo "Valid types are: branch, pr"
+# Validate pipeline trigger
+if [ "$PIPELINE_TRIGGER" != "commit" ] && [ "$PIPELINE_TRIGGER" != "pr-merge" ]; then
+    echo -e "${RED}Error: Invalid pipeline trigger '${PIPELINE_TRIGGER}'${NC}"
+    echo "Valid triggers are: commit, pr-merge"
     exit 1
 fi
 
@@ -127,13 +127,13 @@ print_info() {
 # Main Pipeline
 ################################################################################
 
-print_section "CI/CD Pipeline Starting (${PIPELINE_TYPE})"
+print_section "CI/CD Pipeline Starting (${PIPELINE_TRIGGER})"
 print_info "Source directory: $SOURCE_DIR"
-print_info "Pipeline type: $PIPELINE_TYPE"
+print_info "Pipeline trigger: $PIPELINE_TRIGGER"
 print_info "Release candidate: $RELEASE_CANDIDATE"
 print_info "Skip tests: $SKIP_TESTS"
 
-if [ "$PIPELINE_TYPE" = "pr" ]; then
+if [ "$PIPELINE_TRIGGER" = "pr-merge" ]; then
     print_info "Container repository: $CONTAINER_REPOSITORY"
     print_info "Helm repository: $HELM_REPOSITORY"
 fi
@@ -196,7 +196,7 @@ fi
 # Step 3: Deliver (PR merge only)
 ################################################################################
 
-if [ "$PIPELINE_TYPE" = "pr" ]; then
+if [ "$PIPELINE_TRIGGER" = "pr-merge" ]; then
     print_step "Step 3: Deliver Artifacts"
     
     DELIVER_CMD="dagger -m cicd call deliver --source=$SOURCE_DIR"
@@ -217,7 +217,7 @@ if [ "$PIPELINE_TYPE" = "pr" ]; then
         exit 1
     fi
 else
-    print_info "Step 3: Skipping delivery (branch pipeline)"
+    print_info "Step 3: Skipping delivery (commit pipeline)"
 fi
 
 ################################################################################
@@ -226,8 +226,8 @@ fi
 
 print_step "Pipeline Summary"
 
-if [ "$PIPELINE_TYPE" = "branch" ]; then
-    echo -e "${GREEN}✓${NC} Branch pipeline completed successfully"
+if [ "$PIPELINE_TRIGGER" = "commit" ]; then
+    echo -e "${GREEN}✓${NC} Commit pipeline completed successfully"
     echo ""
     echo "Executed steps:"
     echo "  1. Build multi-architecture container image"
@@ -237,7 +237,7 @@ if [ "$PIPELINE_TYPE" = "branch" ]; then
         echo "  2. Unit tests skipped"
     fi
     echo ""
-    echo "Branch pipelines validate code changes without publishing artifacts."
+    echo "Commit pipelines validate code changes without publishing artifacts."
 else
     echo -e "${GREEN}✓${NC} PR merge pipeline completed successfully"
     echo ""
