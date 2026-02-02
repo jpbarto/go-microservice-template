@@ -68,7 +68,7 @@ func (m *Goserv) UnitTest(
 	source *dagger.Directory,
 ) (string, error) {
 	// Build the application container
-	appContainer, err := m.Build(ctx, source, false)
+	appContainer, err := m.Build(ctx, source, true)
 	if err != nil {
 		return "", err
 	}
@@ -97,11 +97,15 @@ func (m *Goserv) UnitTest(
 	return testOutput, nil
 }
 
-// Deliver publishes the goserv container to ttl.sh registry
+// Deliver publishes the goserv container and Helm chart to repositories
 func (m *Goserv) Deliver(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
+	// Container repository (example: ttl.sh)
+	containerRepository string,
+	// Helm chart repository URL (example: oci://registry-1.docker.io/myuser)
+	helmRepository string,
 	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
@@ -124,16 +128,35 @@ func (m *Goserv) Deliver(
 		return "", err
 	}
 
-	// Publish to ttl.sh (anonymous registry with automatic expiration)
-	// Format: ttl.sh/goserv-version:1h (combines version tag with expiration)
-	imageRef := "ttl.sh/goserv-" + tag + ":1h"
+	// Publish container to registry
+	// Format: {containerRepository}/goserv:{tag}
+	imageRef := containerRepository + "/goserv:" + tag
 
 	address, err := container.Publish(ctx, imageRef)
 	if err != nil {
 		return "", err
 	}
 
-	return address, nil
+	// Package and publish Helm chart
+	helmOutput, err := dag.Container().
+		From("debian:bookworm-slim").
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "curl", "gnupg", "apt-transport-https"}).
+		WithExec([]string{"sh", "-c", "curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null"}).
+		WithExec([]string{"sh", "-c", "echo \"deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main\" | tee /etc/apt/sources.list.d/helm-stable-debian.list"}).
+		WithExec([]string{"apt-get", "update"}).
+		WithExec([]string{"apt-get", "install", "-y", "helm"}).
+		WithMountedDirectory("/workspace", source).
+		WithWorkdir("/workspace").
+		WithExec([]string{"helm", "package", "./helm/goserv", "--version", tag, "--app-version", tag}).
+		WithExec([]string{"helm", "push", "goserv-" + tag + ".tgz", helmRepository}).
+		Stdout(ctx)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to publish Helm chart: %w", err)
+	}
+
+	return fmt.Sprintf("Container: %s\nHelm chart: %s", address, helmOutput), nil
 }
 
 // Deploy installs the Helm chart to a Kubernetes cluster
@@ -144,17 +167,17 @@ func (m *Goserv) Deploy(
 	// Kubernetes config file content
 	kubeconfig *dagger.Secret,
 	// +optional
+	// Container repository (default: ttl.sh)
+	containerRepository string,
+	// +optional
 	// Release name (default: goserv)
 	releaseName string,
 	// +optional
-	// Kubernetes namespace (default: default)
+	// Kubernetes namespace (default: goserv)
 	namespace string,
 	// +optional
-	// Image repository (default: ttl.sh/goserv)
-	imageRepository string,
-	// +optional
-	// Image tag (default: reads from VERSION file)
-	imageTag string,
+	// Build as release candidate (appends -rc to version tag)
+	releaseCandidate bool,
 ) (string, error) {
 	if releaseName == "" {
 		releaseName = "goserv"
@@ -162,15 +185,20 @@ func (m *Goserv) Deploy(
 	if namespace == "" {
 		namespace = "goserv"
 	}
-	if imageRepository == "" {
-		imageRepository = "ttl.sh/goserv-latest"
-		versionContent, err := source.File("VERSION").Contents(ctx)
-		if err == nil {
-			imageRepository = "ttl.sh/goserv-" + strings.TrimSpace(versionContent)
-		}
+	if containerRepository == "" {
+		containerRepository = "ttl.sh"
 	}
-	if imageTag == "" {
-		imageTag = "1h"
+
+	// Read version from VERSION file
+	versionContent, err := source.File("VERSION").Contents(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to read VERSION file: %w", err)
+	}
+	tag := strings.TrimSpace(versionContent)
+
+	// Append -rc suffix for release candidates
+	if releaseCandidate {
+		tag = tag + "-rc"
 	}
 
 	// Create a container with kubectl and helm installed
@@ -191,8 +219,8 @@ func (m *Goserv) Deploy(
 			"./helm/goserv",
 			"--namespace", namespace,
 			"--create-namespace",
-			"--set", "image.repository=" + imageRepository,
-			"--set", "image.tag=" + imageTag,
+			"--set", "image.repository=" + containerRepository + "/goserv",
+			"--set", "image.tag=" + tag,
 			"--wait",
 		}).
 		Stdout(ctx)
