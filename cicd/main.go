@@ -29,7 +29,7 @@ func (m *Goserv) ContainerEcho(stringArg string) *dagger.Container {
 	return dag.Container().From("alpine:latest").WithExec([]string{"echo", stringArg})
 }
 
-// Build builds the Docker image using the Dockerfile in the project directory
+// Build builds a multi-architecture Docker image (linux/amd64 and linux/arm64)
 func (m *Goserv) Build(
 	ctx context.Context,
 	// Source directory containing the project
@@ -51,14 +51,27 @@ func (m *Goserv) Build(
 		tag = tag + "-rc"
 	}
 
-	// Build the container with VERSION as build arg
-	container := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-		BuildArgs: []dagger.BuildArg{
-			{Name: "VERSION", Value: tag},
-		},
-	})
+	// Define target platforms
+	platforms := []dagger.Platform{
+		"linux/amd64",
+		"linux/arm64",
+	}
 
-	return container, nil
+	// Build multi-platform variant
+	platformVariants := make([]*dagger.Container, 0, len(platforms))
+	for _, platform := range platforms {
+		variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
+			Platform: platform,
+			BuildArgs: []dagger.BuildArg{
+				{Name: "VERSION", Value: tag},
+			},
+		})
+		platformVariants = append(platformVariants, variant)
+	}
+
+	// Return the first platform variant (amd64) for testing
+	// When published, all variants will be pushed as a multi-arch manifest
+	return platformVariants[0], nil
 }
 
 // UnitTest runs the goserv container and executes unit tests against it
@@ -122,17 +135,30 @@ func (m *Goserv) Deliver(
 		tag = tag + "-rc"
 	}
 
-	// Build the application container with the version tag
-	container, err := m.Build(ctx, source, releaseCandidate)
-	if err != nil {
-		return "", err
+	// Build multi-architecture container images
+	platforms := []dagger.Platform{
+		"linux/amd64",
+		"linux/arm64",
 	}
 
-	// Publish container to registry
+	platformVariants := make([]*dagger.Container, 0, len(platforms))
+	for _, platform := range platforms {
+		variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
+			Platform: platform,
+			BuildArgs: []dagger.BuildArg{
+				{Name: "VERSION", Value: tag},
+			},
+		})
+		platformVariants = append(platformVariants, variant)
+	}
+
+	// Publish multi-architecture container to registry
 	// Format: {containerRepository}/goserv:{tag}
 	imageRef := containerRepository + "/goserv:" + tag
 
-	address, err := container.Publish(ctx, imageRef)
+	address, err := dag.Container().Publish(ctx, imageRef, dagger.ContainerPublishOpts{
+		PlatformVariants: platformVariants,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -156,7 +182,7 @@ func (m *Goserv) Deliver(
 		return "", fmt.Errorf("failed to publish Helm chart: %w", err)
 	}
 
-	return fmt.Sprintf("Container: %s\nHelm chart: %s", address, helmOutput), nil
+	return fmt.Sprintf("Container: %s (multi-arch: linux/amd64, linux/arm64)\nHelm chart: %s", address, helmOutput), nil
 }
 
 // Deploy installs the Helm chart to a Kubernetes cluster

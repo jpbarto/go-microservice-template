@@ -1,8 +1,12 @@
-# Build stage
-FROM golang:1.21-bookworm AS builder
+# syntax=docker/dockerfile:1
 
-# Build argument for version
+# Build stage
+FROM --platform=$BUILDPLATFORM golang:1.21-bookworm AS builder
+
+# Build arguments for version and target platform
 ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH
 
 # Install ca-certificates and git
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -25,8 +29,8 @@ RUN go mod download
 # Copy source code
 COPY src/ .
 
-# Build the application with version
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X main.version=${VERSION}" -o goserv .
+# Build the application with version for the target architecture
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -ldflags "-X main.version=${VERSION}" -o goserv .
 
 # Runtime stage
 FROM debian:bookworm-slim
