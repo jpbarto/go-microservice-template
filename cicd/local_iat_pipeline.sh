@@ -11,7 +11,7 @@
 #   - Colima installed and configured
 #   - kubectl installed
 #   - Dagger CLI installed
-#   - pismolocal colima profile exists
+#   - acme-local colima profile exists
 #
 # Usage:
 #   ./local_iat_pipeline.sh [OPTIONS]
@@ -37,7 +37,7 @@ NC='\033[0m' # No Color
 RELEASE_CANDIDATE=false
 SKIP_DEPLOY=false
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COLIMA_PROFILE="pismolocal"
+COLIMA_PROFILE="acme-local"
 KUBECTL_CONTEXT="colima-${COLIMA_PROFILE}"
 NAMESPACE="default"
 RELEASE_NAME="goserv"
@@ -149,7 +149,7 @@ if ! command -v colima &> /dev/null; then
 fi
 print_success "Colima is installed"
 
-# Check if pismolocal profile exists and is running
+# Check if acme-local profile exists and is running
 if ! colima list | grep -q "^${COLIMA_PROFILE}"; then
     print_error "Colima profile '${COLIMA_PROFILE}' does not exist"
     echo ""
