@@ -68,7 +68,7 @@ func (m *Goserv) UnitTest(
 	source *dagger.Directory,
 ) (string, error) {
 	// Build the application container
-	appContainer, err := m.Build(ctx, source, true)
+	appContainer, err := m.Build(ctx, source, false)
 	if err != nil {
 		return "", err
 	}
