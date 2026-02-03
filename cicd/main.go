@@ -144,14 +144,12 @@ func (m *Goserv) IntegrationTest(
 
 	// Run the integration test script in a container with k6 and other dependencies
 	// The integration_test.sh script will call performance_test.sh and acceptance_test.sh
+	// Install k6 directly as a binary instead of from apt repository
 	testOutput, err := dag.Container().
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "bash", "curl", "jq", "ca-certificates", "gnupg"}).
-		WithExec([]string{"sh", "-c", "curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor | tee /usr/share/keyrings/k6-archive-keyring.gpg > /dev/null"}).
-		WithExec([]string{"sh", "-c", "echo \"deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main\" | tee /etc/apt/sources.list.d/k6.list"}).
-		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "k6"}).
+		WithExec([]string{"apt-get", "install", "-y", "bash", "curl", "jq", "ca-certificates", "wget", "tar", "xz-utils"}).
+		WithExec([]string{"sh", "-c", "wget -qO- https://github.com/grafana/k6/releases/download/v0.49.0/k6-v0.49.0-linux-amd64.tar.gz | tar xz --strip-components=1 -C /usr/local/bin k6-v0.49.0-linux-amd64/k6"}).
 		WithMountedDirectory("/workspace", source).
 		WithWorkdir("/workspace").
 		WithEnvVariable("TEST_HOST", targetHost).
