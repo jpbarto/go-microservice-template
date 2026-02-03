@@ -249,7 +249,7 @@ if [ "$SKIP_DEPLOY" = false ]; then
     
     # Wait for deployment to be ready
     print_info "Waiting for deployment to be ready..."
-    if kubectl rollout status deployment/${RELEASE_NAME}-goserv -n ${NAMESPACE} --timeout=120s; then
+    if kubectl rollout status deployment/${RELEASE_NAME} -n ${NAMESPACE} --timeout=120s; then
         print_success "Deployment is ready"
     else
         print_error "Deployment did not become ready in time"
@@ -263,10 +263,10 @@ else
     
     # Verify existing deployment
     print_info "Verifying existing deployment..."
-    if kubectl get deployment/${RELEASE_NAME}-goserv -n ${NAMESPACE} &> /dev/null; then
-        print_success "Deployment '${RELEASE_NAME}-goserv' exists"
+    if kubectl get deployment/${RELEASE_NAME} -n ${NAMESPACE} &> /dev/null; then
+        print_success "Deployment '${RELEASE_NAME}' exists"
     else
-        print_error "Deployment '${RELEASE_NAME}-goserv' not found in namespace '${NAMESPACE}'"
+        print_error "Deployment '${RELEASE_NAME}' not found in namespace '${NAMESPACE}'"
         exit 1
     fi
 fi
@@ -286,8 +286,8 @@ done
 print_info "Using local port: ${LOCAL_PORT}"
 
 # Start port-forward in background
-print_info "Starting port-forward to ${RELEASE_NAME}-goserv service..."
-kubectl port-forward -n ${NAMESPACE} svc/${RELEASE_NAME}-goserv ${LOCAL_PORT}:80 &> /tmp/kubectl-port-forward.log &
+print_info "Starting port-forward to ${RELEASE_NAME} service..."
+kubectl port-forward -n ${NAMESPACE} svc/${RELEASE_NAME} ${LOCAL_PORT}:80 &> /tmp/kubectl-port-forward.log &
 PORT_FORWARD_PID=$!
 
 # Function to cleanup port-forward on exit
@@ -370,7 +370,7 @@ else
     print_info "Troubleshooting:"
     echo "  • Check pod logs: kubectl logs -n ${NAMESPACE} -l app.kubernetes.io/name=goserv"
     echo "  • Check pod status: kubectl get pods -n ${NAMESPACE}"
-    echo "  • Check service: kubectl get svc -n ${NAMESPACE} ${RELEASE_NAME}-goserv"
+    echo "  • Check service: kubectl get svc -n ${NAMESPACE} ${RELEASE_NAME}"
     echo ""
     exit 1
 fi
