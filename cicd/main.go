@@ -29,7 +29,7 @@ func (m *Goserv) ContainerEcho(stringArg string) *dagger.Container {
 	return dag.Container().From("alpine:latest").WithExec([]string{"echo", stringArg})
 }
 
-// Build builds a multi-architecture Docker image (linux/amd64 and linux/arm64)
+// Build builds a multi-architecture Docker image and exports it as an OCI tarball
 func (m *Goserv) Build(
 	ctx context.Context,
 	// Source directory containing the project
@@ -37,7 +37,7 @@ func (m *Goserv) Build(
 	// +optional
 	// Whether to build as release candidate (appends -rc to version)
 	releaseCandidate bool,
-) (*dagger.Container, error) {
+) (*dagger.File, error) {
 	// Read version from VERSION file
 	versionContent, err := source.File("VERSION").Contents(ctx)
 	if err != nil {
@@ -57,7 +57,7 @@ func (m *Goserv) Build(
 		"linux/arm64",
 	}
 
-	// Build multi-platform variant
+	// Build multi-platform variants
 	platformVariants := make([]*dagger.Container, 0, len(platforms))
 	for _, platform := range platforms {
 		variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
@@ -69,9 +69,14 @@ func (m *Goserv) Build(
 		platformVariants = append(platformVariants, variant)
 	}
 
-	// Return the first platform variant (amd64) for testing
-	// When published, all variants will be pushed as a multi-arch manifest
-	return platformVariants[0], nil
+	// Export as multi-platform OCI tarball
+	// Use the first variant as base and pass only the remaining variants
+	// to avoid duplicate platform error
+	tarball := platformVariants[0].AsTarball(dagger.ContainerAsTarballOpts{
+		PlatformVariants: platformVariants[1:],
+	})
+
+	return tarball, nil
 }
 
 // UnitTest runs the goserv container and executes unit tests against it
@@ -79,11 +84,23 @@ func (m *Goserv) UnitTest(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
+	// +optional
+	// Pre-built OCI image tarball (if not provided, will build from source)
+	imageTarball *dagger.File,
 ) (string, error) {
-	// Build the application container
-	appContainer, err := m.Build(ctx, source, false)
-	if err != nil {
-		return "", err
+	var appContainer *dagger.Container
+
+	if imageTarball != nil {
+		// Import the pre-built OCI image
+		// This will automatically select the appropriate platform variant for the host
+		appContainer = dag.Container().Import(imageTarball)
+	} else {
+		// Build from source if no tarball provided
+		tarball, err := m.Build(ctx, source, false)
+		if err != nil {
+			return "", err
+		}
+		appContainer = dag.Container().Import(tarball)
 	}
 
 	// Start the application container as a service on port 8080
@@ -159,6 +176,9 @@ func (m *Goserv) Deliver(
 	// Helm chart repository URL (example: oci://registry-1.docker.io/myuser)
 	helmRepository string,
 	// +optional
+	// Pre-built OCI image tarball (if not provided, will build from source)
+	imageTarball *dagger.File,
+	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
 ) (string, error) {
@@ -174,45 +194,42 @@ func (m *Goserv) Deliver(
 		tag = tag + "-rc"
 	}
 
-	// Build multi-architecture container images
-	platforms := []dagger.Platform{
-		"linux/amd64",
-		"linux/arm64",
+	// Get or build the OCI image
+	var tarball *dagger.File
+	if imageTarball != nil {
+		tarball = imageTarball
+	} else {
+		tarball, err = m.Build(ctx, source, releaseCandidate)
+		if err != nil {
+			return "", fmt.Errorf("failed to build image: %w", err)
+		}
 	}
 
-	platformVariants := make([]*dagger.Container, 0, len(platforms))
-	for _, platform := range platforms {
-		variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-			Platform: platform,
-			BuildArgs: []dagger.BuildArg{
-				{Name: "VERSION", Value: tag},
-			},
-		})
-		platformVariants = append(platformVariants, variant)
-	}
+	// Import the multi-arch OCI tarball
+	container := dag.Container().Import(tarball)
 
-	// Publish multi-architecture container to registry
-	// Format: {containerRepository}/goserv:{tag}
+	// Publish to registry
+	// The import preserves all platform variants from the tarball
 	imageRef := containerRepository + "/goserv:" + tag
 
-	address, err := dag.Container().Publish(ctx, imageRef, dagger.ContainerPublishOpts{
-		PlatformVariants: platformVariants,
-	})
+	address, err := container.Publish(ctx, imageRef)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to publish container: %w", err)
 	}
 
 	// Package and publish Helm chart
 	helmOutput, err := dag.Container().
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "curl", "gnupg", "apt-transport-https"}).
+		WithExec([]string{"apt-get", "install", "-y", "curl", "gnupg", "apt-transport-https", "yq"}).
 		WithExec([]string{"sh", "-c", "curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null"}).
 		WithExec([]string{"sh", "-c", "echo \"deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main\" | tee /etc/apt/sources.list.d/helm-stable-debian.list"}).
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{"apt-get", "install", "-y", "helm"}).
 		WithMountedDirectory("/workspace", source).
 		WithWorkdir("/workspace").
+		WithExec([]string{"sh", "-c", "yq eval '.image.repository = \"" + containerRepository + "/goserv\"' -i ./helm/goserv/values.yaml"}).
+		WithExec([]string{"sh", "-c", "yq eval '.image.tag = \"" + tag + "\"' -i ./helm/goserv/values.yaml"}).
 		WithExec([]string{"helm", "package", "./helm/goserv", "--version", tag, "--app-version", tag}).
 		WithExec([]string{"helm", "push", "goserv-" + tag + ".tgz", helmRepository}).
 		Stdout(ctx)
@@ -221,10 +238,11 @@ func (m *Goserv) Deliver(
 		return "", fmt.Errorf("failed to publish Helm chart: %w", err)
 	}
 
-	return fmt.Sprintf("Container: %s (multi-arch: linux/amd64, linux/arm64)\nHelm chart: %s", address, helmOutput), nil
+	chartRef := helmRepository + "/goserv:" + tag
+	return fmt.Sprintf("Container: %s (multi-arch: linux/amd64, linux/arm64)\nHelm chart: %s\nHelm output: %s", address, chartRef, helmOutput), nil
 }
 
-// Deploy installs the Helm chart to a Kubernetes cluster
+// Deploy installs the Helm chart from a Helm repository to a Kubernetes cluster
 func (m *Goserv) Deploy(
 	ctx context.Context,
 	// Source directory containing the project
@@ -232,8 +250,8 @@ func (m *Goserv) Deploy(
 	// Kubernetes config file content
 	kubeconfig *dagger.Secret,
 	// +optional
-	// Container repository (default: ttl.sh)
-	containerRepository string,
+	// Helm chart repository URL (default: oci://ttl.sh)
+	helmRepository string,
 	// +optional
 	// Release name (default: goserv)
 	releaseName string,
@@ -247,11 +265,13 @@ func (m *Goserv) Deploy(
 	if releaseName == "" {
 		releaseName = "goserv"
 	}
+
+	if helmRepository == "" {
+		helmRepository = "oci://ttl.sh"
+	}
+
 	if namespace == "" {
 		namespace = "goserv"
-	}
-	if containerRepository == "" {
-		containerRepository = "ttl.sh"
 	}
 
 	// Read version from VERSION file
@@ -266,6 +286,9 @@ func (m *Goserv) Deploy(
 		tag = tag + "-rc"
 	}
 
+	// Construct the chart reference
+	chartRef := helmRepository + "/goserv:" + tag
+
 	// Create a container with kubectl and helm installed
 	output, err := dag.Container().
 		From("debian:bookworm-slim").
@@ -277,15 +300,12 @@ func (m *Goserv) Deploy(
 		WithExec([]string{"apt-get", "install", "-y", "helm"}).
 		WithSecretVariable("KUBECONFIG_CONTENT", kubeconfig).
 		WithExec([]string{"sh", "-c", "mkdir -p /root/.kube && echo \"$KUBECONFIG_CONTENT\" > /root/.kube/config"}).
-		WithMountedDirectory("/workspace", source).
 		WithWorkdir("/workspace").
 		WithExec([]string{
 			"helm", "upgrade", "--install", releaseName,
-			"./helm/goserv",
+			chartRef,
 			"--namespace", namespace,
 			"--create-namespace",
-			"--set", "image.repository=" + containerRepository + "/goserv",
-			"--set", "image.tag=" + tag,
 			"--wait",
 		}).
 		Stdout(ctx)

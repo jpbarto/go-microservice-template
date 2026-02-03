@@ -15,7 +15,13 @@
 set -e  # Exit on error
 set -u  # Exit on undefined variable
 
-export $(grep -v '^#' local_cicd.env | xargs)  # Load environment variables from local_cicd.env
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load environment variables from local_cicd.env in the script's directory
+if [ -f "$SCRIPT_DIR/local_cicd.env" ]; then
+    export $(grep -v '^#' "$SCRIPT_DIR/local_cicd.env" | xargs)
+fi
 
 # Color codes for output
 RED='\033[0;31m'
@@ -43,10 +49,6 @@ while [[ $# -gt 0 ]]; do
         --pipeline-trigger)
             PIPELINE_TRIGGER="$2"
             shift 2
-            ;;
-        --release-candidate|-rc)
-            RELEASE_CANDIDATE=true
-            shift
             ;;
         --skip-tests)
             SKIP_TESTS=true
@@ -97,6 +99,11 @@ if [ "$PIPELINE_TRIGGER" != "commit" ] && [ "$PIPELINE_TRIGGER" != "pr-merge" ];
     echo -e "${RED}Error: Invalid pipeline trigger '${PIPELINE_TRIGGER}'${NC}"
     echo "Valid triggers are: commit, pr-merge"
     exit 1
+fi
+
+# Set release candidate to true for PR merges
+if [ "$PIPELINE_TRIGGER" = "pr-merge" ]; then
+    RELEASE_CANDIDATE=true
 fi
 
 # Function to print section headers
@@ -170,16 +177,20 @@ fi
 
 print_step "Step 1: Build Docker Image"
 
-BUILD_CMD="dagger -m cicd call build --source=$SOURCE_DIR"
+BUILD_CMD="dagger -m cicd call build --source=$SOURCE_DIR export --path=./build/goserv-image.tar"
 if [ "$RELEASE_CANDIDATE" = true ]; then
-    BUILD_CMD="$BUILD_CMD --release-candidate=true"
+    BUILD_CMD="dagger -m cicd call build --source=$SOURCE_DIR --release-candidate=true export --path=./build/goserv-image.tar"
 fi
 
 print_info "Running: $BUILD_CMD"
 echo ""
 
-if eval "$BUILD_CMD" > /dev/null 2>&1; then
+# Create build directory if it doesn't exist
+mkdir -p ./build
+
+if eval "$BUILD_CMD"; then
     print_success "Build completed successfully"
+    print_info "Multi-arch image exported to: ./build/goserv-image.tar"
 else
     print_error "Build failed"
     exit 1
@@ -192,7 +203,7 @@ fi
 if [ "$SKIP_TESTS" = false ]; then
     print_step "Step 2: Run Unit Tests"
     
-    TEST_CMD="dagger -m cicd call unit-test --source=$SOURCE_DIR"
+    TEST_CMD="dagger -m cicd call unit-test --source=$SOURCE_DIR --image-tarball=./build/goserv-image.tar"
     print_info "Running: $TEST_CMD"
     echo ""
     
@@ -216,6 +227,7 @@ if [ "$PIPELINE_TRIGGER" = "pr-merge" ]; then
     DELIVER_CMD="dagger -m cicd call deliver --source=$SOURCE_DIR"
     DELIVER_CMD="$DELIVER_CMD --container-repository=$CONTAINER_REPOSITORY_URL"
     DELIVER_CMD="$DELIVER_CMD --helm-repository=$HELM_REPOSITORY_URL"
+    DELIVER_CMD="$DELIVER_CMD --image-tarball=./build/goserv-image.tar"
     
     if [ "$RELEASE_CANDIDATE" = true ]; then
         DELIVER_CMD="$DELIVER_CMD --release-candidate=true"

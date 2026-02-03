@@ -17,13 +17,22 @@
 #   ./local_iat_pipeline.sh [OPTIONS]
 #
 # Options:
-#   --release-candidate, -rc    Deploy and test release candidate version
 #   --skip-deploy              Skip deployment step (use existing deployment)
 #   --help, -h                 Show this help message
+#
+# Note: IAT pipeline always uses release candidate (-rc) builds
 ################################################################################
 
 set -e  # Exit on error
 set -u  # Exit on undefined variable
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Load environment variables from local_cicd.env in the script's directory
+if [ -f "$SCRIPT_DIR/local_cicd.env" ]; then
+    export $(grep -v '^#' "$SCRIPT_DIR/local_cicd.env" | xargs)
+fi
 
 # Color codes for output
 RED='\033[0;31m'
@@ -34,21 +43,17 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Default configuration
-RELEASE_CANDIDATE=false
+RELEASE_CANDIDATE=true  # IAT always uses release candidate builds
 SKIP_DEPLOY=false
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COLIMA_PROFILE="acme-local"
 KUBECTL_CONTEXT="colima-${COLIMA_PROFILE}"
-NAMESPACE="default"
 RELEASE_NAME="goserv"
+NAMESPACE="goserv"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --release-candidate|-rc)
-            RELEASE_CANDIDATE=true
-            shift
-            ;;
         --skip-deploy)
             SKIP_DEPLOY=true
             shift
@@ -57,7 +62,6 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --release-candidate, -rc    Deploy and test release candidate version"
             echo "  --skip-deploy              Skip deployment step (use existing deployment)"
             echo "  --help, -h                 Show this help message"
             exit 0
@@ -116,7 +120,6 @@ print_section "Local IAT Pipeline Starting"
 print_info "Source directory: $SOURCE_DIR"
 print_info "Colima profile: $COLIMA_PROFILE"
 print_info "Kubectl context: $KUBECTL_CONTEXT"
-print_info "Namespace: $NAMESPACE"
 print_info "Release name: $RELEASE_NAME"
 print_info "Release candidate: $RELEASE_CANDIDATE"
 print_info "Skip deploy: $SKIP_DEPLOY"
@@ -228,8 +231,7 @@ if [ "$SKIP_DEPLOY" = false ]; then
     DEPLOY_CMD="dagger -m cicd call deploy --source=${SOURCE_DIR}"
     DEPLOY_CMD="${DEPLOY_CMD} --kubeconfig=file:${HOME}/.kube/config"
     DEPLOY_CMD="${DEPLOY_CMD} --release-name=${RELEASE_NAME}"
-    DEPLOY_CMD="${DEPLOY_CMD} --namespace=${NAMESPACE}"
-    DEPLOY_CMD="${DEPLOY_CMD} --container-repository=ttl.sh"
+    DEPLOY_CMD="${DEPLOY_CMD} --helm-repository=${HELM_REPOSITORY_URL}"
     
     if [ "$RELEASE_CANDIDATE" = true ]; then
         DEPLOY_CMD="${DEPLOY_CMD} --release-candidate=true"

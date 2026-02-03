@@ -161,10 +161,12 @@ test_service_version_matches_file() {
     # Read VERSION file from project root
     local expected_version=$(cat "$version_file" | tr -d '\n\r ')
     
-    if [ "$service_version" = "$expected_version" ]; then
-        print_test_result "Service version matches VERSION file (${expected_version})" "PASS"
+    # Check if the service version has -rc suffix
+    # Accept both the base version and the -rc version
+    if [ "$service_version" = "$expected_version" ] || [ "$service_version" = "${expected_version}-rc" ]; then
+        print_test_result "Service version matches VERSION file (${service_version})" "PASS"
     else
-        print_test_result "Service version matches VERSION file" "FAIL" "Expected: $expected_version, Got: $service_version"
+        print_test_result "Service version matches VERSION file" "FAIL" "Expected: $expected_version or ${expected_version}-rc, Got: $service_version"
     fi
 }
 

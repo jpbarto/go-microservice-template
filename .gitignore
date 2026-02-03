@@ -20,6 +20,9 @@ go.work
 # Binary output
 goserv
 
+# Build artifacts
+build/
+
 # CA bundle with certificates (including Netskope)
 .ca-bundle.pem
 .certs/
