@@ -99,4 +99,4 @@ application:
   port: "8080"
   # URL of the dependency service to call
   # Example: "http://another-service:80/"
-  dependencyUrl: ""
+  dependencyUrl: "https://api.restful-api.dev/objects/7"
