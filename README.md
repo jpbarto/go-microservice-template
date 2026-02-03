@@ -128,7 +128,7 @@ To simulate the Dagger code executed when you merge to your main branch run
 ./cicd/local_ci_pipeline.sh --pipeline-trigger pr-merge
 ```
 
-This calls the same Dagger code as above but specifies the release candidate flag to the functions.
+This calls the same Dagger code as above but specifies the release candidate flag to the functions. After the UnitTest function the pipeline then calls the Deliver function.
 
 #### Simulate an Integration Test
 To simulate the Dagger code executed when during an integration test run

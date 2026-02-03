@@ -15,6 +15,8 @@
 set -e  # Exit on error
 set -u  # Exit on undefined variable
 
+export $(grep -v '^#' local_cicd.env | xargs)  # Load environment variables from local_cicd.env
+
 # Color codes for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,8 +30,8 @@ RELEASE_CANDIDATE=false
 SKIP_TESTS=false
 PIPELINE_TRIGGER="commit"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CONTAINER_REPOSITORY="ttl.sh"
-HELM_REPOSITORY="oci://ttl.sh"
+CONTAINER_REPOSITORY_URL="ttl.sh"
+HELM_REPOSITORY_URL="oci://ttl.sh"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -51,19 +53,19 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --container-repository=*)
-            CONTAINER_REPOSITORY="${1#*=}"
+            CONTAINER_REPOSITORY_URL="${1#*=}"
             shift
             ;;
         --container-repository)
-            CONTAINER_REPOSITORY="$2"
+            CONTAINER_REPOSITORY_URL="$2"
             shift 2
             ;;
         --helm-repository=*)
-            HELM_REPOSITORY="${1#*=}"
+            HELM_REPOSITORY_URL="${1#*=}"
             shift
             ;;
         --helm-repository)
-            HELM_REPOSITORY="$2"
+            HELM_REPOSITORY_URL="$2"
             shift 2
             ;;
         --help|-h)
@@ -146,8 +148,8 @@ print_info "Release candidate: $RELEASE_CANDIDATE"
 print_info "Skip tests: $SKIP_TESTS"
 
 if [ "$PIPELINE_TRIGGER" = "pr-merge" ]; then
-    print_info "Container repository: $CONTAINER_REPOSITORY"
-    print_info "Helm repository: $HELM_REPOSITORY"
+    print_info "Container repository: $CONTAINER_REPOSITORY_URL"
+    print_info "Helm repository: $HELM_REPOSITORY_URL"
 fi
 
 # Read VERSION file
@@ -212,8 +214,8 @@ if [ "$PIPELINE_TRIGGER" = "pr-merge" ]; then
     print_step "Step 3: Deliver Artifacts"
     
     DELIVER_CMD="dagger -m cicd call deliver --source=$SOURCE_DIR"
-    DELIVER_CMD="$DELIVER_CMD --container-repository=$CONTAINER_REPOSITORY"
-    DELIVER_CMD="$DELIVER_CMD --helm-repository=$HELM_REPOSITORY"
+    DELIVER_CMD="$DELIVER_CMD --container-repository=$CONTAINER_REPOSITORY_URL"
+    DELIVER_CMD="$DELIVER_CMD --helm-repository=$HELM_REPOSITORY_URL"
     
     if [ "$RELEASE_CANDIDATE" = true ]; then
         DELIVER_CMD="$DELIVER_CMD --release-candidate=true"
@@ -263,8 +265,8 @@ else
     echo "  3. Deliver artifacts to repositories"
     echo ""
     print_info "Published artifacts:"
-    echo "  - Container images: $CONTAINER_REPOSITORY"
-    echo "  - Helm chart: $HELM_REPOSITORY"
+    echo "  - Container images: $CONTAINER_REPOSITORY_URL"
+    echo "  - Helm chart: $HELM_REPOSITORY_URL"
 fi
 
 echo ""
