@@ -61,16 +61,21 @@ A containerized Go microservice that responds to HTTP requests with service meta
 │   ├── go.mod              # Go module definition
 │   └── go.sum              # Go module checksums
 ├── cicd/
-│   ├── main.go             # Dagger CI/CD module with build, test, and delivery functions
-│   ├── dagger.json         # Dagger module configuration
-│   ├── go.mod              # Dagger module dependencies
-│   └── internal/           # Generated Dagger SDK code
+│   ├── main.go                 # Dagger CI/CD module with build, test, and delivery functions
+│   ├── dagger.json             # Dagger module configuration
+│   ├── go.mod                  # Dagger module dependencies
+│   ├── internal/               # Generated Dagger SDK code
+│   ├── local_ci_pipeline.sh    # Simulate CI pipeline locally (commit and PR merge)
+│   └── local_iat_pipeline.sh   # Simulate integration and acceptance testing locally
 ├── hooks/
 │   ├── pre-commit          # Git hook to sync VERSION to Helm chart
 │   ├── install.sh          # Script to install Git hooks
 │   └── README.md           # Documentation for Git hooks
 ├── tests/
-│   └── unit_test.sh        # Automated unit test script for goserv endpoints
+│   ├── unit_test.sh        # Automated unit test script for goserv endpoints
+│   ├── integration_test.sh # Integration test orchestration script
+│   ├── performance_test.sh # k6-based performance testing
+│   └── acceptance_test.sh  # Acceptance testing script
 ├── helm/
 │   └── goserv/
 │       ├── Chart.yaml      # Helm chart metadata
@@ -130,40 +135,37 @@ To simulate the Dagger code executed when you merge to your main branch run
 
 This calls the same Dagger code as above but specifies the release candidate flag to the functions. After the UnitTest function the pipeline then calls the Deliver function.
 
-#### Simulate an Integration Test
-To simulate the Dagger code executed when during an integration test run
+#### Simulate an Integration and Acceptance Test
+To simulate the Dagger code executed during integration and acceptance testing run
 ```
 ./cicd/local_iat_pipeline.sh
 ```
 
-This calls the Dagger Deploy function followed by the IntegrationTest function.
-
-#### Simulate a Staging Test
-To simulate the Dagger code executed during a Staging test run
-```
-./cicd/local_staging_pipeline.sh
-```
-
-This calls the Dagger Deploy function for the current revision of your repository. It then calls the Validate function defined in Dagger. After these two functions succeed the pipeline then runs the Deploy function for the previous tagged release of your repository followed by the Validate function.
-
-#### Simulate Deployment
-To simulate the Dagger code executed during deployment run
-```
-./cicd/local_deploy_pipeline.sh
-```
-
-This function calls the Dagger Deploy function followed by the Validate function.
+This calls the Dagger Deploy function to install the Helm chart to your local Kubernetes cluster, sets up port-forwarding, and then runs the IntegrationTest function which executes:
+- Integration tests (`tests/integration_test.sh`)
+- Performance tests with k6 (`tests/performance_test.sh`)
+- Acceptance tests (`tests/acceptance_test.sh`)
 
 ### Available Dagger Functions
 
-- **`build`**: Builds the Docker image using the Dockerfile, automatically reading version from VERSION file
+- **`build`**: Builds multi-architecture Docker images (linux/amd64, linux/arm64) and exports as OCI tarball
   - `--release-candidate`: Optional boolean flag to append "-rc" suffix to version for release candidate builds
+  - Returns a `*dagger.File` (tarball) that can be passed to other functions
 - **`unit-test`**: Runs the goserv container and executes automated tests against it
-- **`deliver`**: Publishes the container image to ttl.sh registry (temporary registry for testing)
+  - `--image-tarball`: Optional pre-built OCI tarball (if not provided, builds from source)
+- **`integration-test`**: Runs integration and performance tests using k6 against a deployed service
+  - `--target-host`: Hostname of the service to test
+  - `--target-port`: Port of the service to test
+- **`deliver`**: Publishes container images and Helm charts to OCI registries
+  - `--container-repository`: Repository for container images (e.g., ttl.sh/goserv)
+  - `--helm-repository`: OCI URL for Helm charts (e.g., oci://ttl.sh/charts/goserv)
+  - `--image-tarball`: Optional pre-built OCI tarball (if not provided, builds from source)
   - `--release-candidate`: Optional boolean flag to build and publish release candidate version
+  - Embeds image repository and tag into Helm chart values.yaml using yq
 - **`deploy`**: Deploys the application to a Kubernetes cluster using Helm
   - Requires kubeconfig secret for cluster authentication
   - Configurable release name, namespace, and image settings
+  - Pulls Helm chart from OCI registry
 
 ### Prerequisites for Dagger
 
@@ -178,20 +180,31 @@ This function calls the Dagger Deploy function followed by the Validate function
 All Dagger commands must be run from the **repository root** with the `-m cicd` flag:
 
 ```bash
-# Build the container image (automatically uses version from VERSION file)
-dagger -m cicd call build --source=.
+# Build the container image and export as tarball (automatically uses version from VERSION file)
+dagger -m cicd call build --source=. export --path=./build/goserv-image.tar
 
 # Build as release candidate (appends -rc to version)
-dagger -m cicd call build --source=. --release-candidate=true
+dagger -m cicd call build --source=. --release-candidate=true export --path=./build/goserv-image.tar
 
 # Run unit tests (builds and tests the application)
 dagger -m cicd call unit-test --source=.
 
-# Deliver to ttl.sh registry (publishes for 1 hour)
-dagger -m cicd call deliver --source=.
+# Run unit tests with pre-built tarball
+dagger -m cicd call unit-test --source=. --image-tarball=./build/goserv-image.tar
 
-# Deliver release candidate version
-dagger -m cicd call deliver --source=. --release-candidate=true
+# Deliver to OCI registries (publishes container image and Helm chart)
+dagger -m cicd call deliver \
+  --source=. \
+  --container-repository=ttl.sh/goserv \
+  --helm-repository=oci://ttl.sh/charts/goserv
+
+# Deliver release candidate version with pre-built tarball
+dagger -m cicd call deliver \
+  --source=. \
+  --container-repository=ttl.sh/goserv \
+  --helm-repository=oci://ttl.sh/charts/goserv \
+  --image-tarball=./build/goserv-image.tar \
+  --release-candidate=true
 
 # Deploy to Kubernetes cluster (requires kubeconfig)
 dagger -m cicd call deploy \
@@ -201,16 +214,24 @@ dagger -m cicd call deploy \
   --namespace=default
 ```
 
-### Exporting Built Images
+### Exporting and Importing Built Images
 
-To save a built image locally:
+The Build function exports multi-architecture images as OCI tarballs:
 
 ```bash
-# Export to Docker
-dagger -m cicd call build --source=. export --path=/tmp/goserv.tar
+# Export tarball to local filesystem
+dagger -m cicd call build --source=. export --path=./build/goserv-image.tar
 
-# Load into Docker
-docker load < /tmp/goserv.tar
+# Load into Docker (will select appropriate architecture for your host)
+docker load < ./build/goserv-image.tar
+
+# The tarball can be reused in other Dagger functions
+dagger -m cicd call unit-test --source=. --image-tarball=./build/goserv-image.tar
+dagger -m cicd call deliver \
+  --source=. \
+  --container-repository=ttl.sh/goserv \
+  --helm-repository=oci://ttl.sh/charts/goserv \
+  --image-tarball=./build/goserv-image.tar
 ```
 
 ### CI/CD Integration
@@ -288,15 +309,14 @@ go run main.go
 ### Using Dagger (Recommended)
 
 ```bash
-# Build using Dagger (automatically uses VERSION file)
-dagger -m cicd call build --source=.
+# Build using Dagger (automatically uses VERSION file) and export as tarball
+dagger -m cicd call build --source=. export --path=./build/goserv-image.tar
 
 # Build as release candidate (appends -rc to version)
-dagger -m cicd call build --source=. --release-candidate=true
+dagger -m cicd call build --source=. --release-candidate=true export --path=./build/goserv-image.tar
 
-# Export to local Docker (note: use container-export for the full command)
-dagger -m cicd call build --source=. container export --path=/tmp/goserv.tar
-docker load < /tmp/goserv.tar
+# Load the multi-arch tarball into local Docker
+docker load < ./build/goserv-image.tar
 ```
 
 ### Using Docker Directly
@@ -504,13 +524,17 @@ curl http://localhost:8080/
 ### Using Dagger and Helm
 
 ```bash
-# 1. Build and test with Dagger
-dagger -m cicd call build --source=.
-dagger -m cicd call unit-test --source=.
+# 1. Build and test with Dagger (using tarball for efficiency)
+dagger -m cicd call build --source=. export --path=./build/goserv-image.tar
+dagger -m cicd call unit-test --source=. --image-tarball=./build/goserv-image.tar
 
-# 2. Deliver to ttl.sh (temporary registry for testing)
-# This automatically reads version from VERSION file
-dagger -m cicd call deliver --source=.
+# 2. Deliver to OCI registries (container image and Helm chart)
+# This automatically reads version from VERSION file and embeds it in the Helm chart
+dagger -m cicd call deliver \
+  --source=. \
+  --container-repository=ttl.sh/goserv \
+  --helm-repository=oci://ttl.sh/charts/goserv \
+  --image-tarball=./build/goserv-image.tar
 
 # 3. Option A: Deploy using Dagger Deploy function
 dagger -m cicd call deploy \
@@ -519,12 +543,9 @@ dagger -m cicd call deploy \
   --release-name=my-service \
   --namespace=default
 
-# 3. Option B: Deploy with Helm manually using the published image
-# Note: ttl.sh images expire after 1 hour by default
-helm install my-service ./helm/goserv \
-  --set image.repository="ttl.sh/goserv-$(cat VERSION)" \
-  --set image.tag="1h" \
-  --set application.dependencyUrl="http://httpbin.default.svc.cluster.local/headers"
+# 3. Option B: Deploy with Helm manually using the published chart
+# Note: The chart already has image repository and tag embedded by Deliver function
+helm install my-service oci://ttl.sh/charts/goserv --version $(cat VERSION)
 
 # 4. Verify deployment
 kubectl get pods
@@ -571,12 +592,12 @@ git clone https://github.com/jpbarto/go-microservice-template.git
 cd go-microservice-template
 ./hooks/install.sh  # Install Git hooks for version management
 
-# 2. Build and test
-dagger -m cicd call build --source=.
-dagger -m cicd call unit-test --source=.
+# 2. Build and test using local CI pipeline
+./cicd/local_ci_pipeline.sh
 
-# 3. Run locally
-docker run -p 8080:8080 goserv:latest
+# 3. Load and run locally
+docker load < ./build/goserv-image.tar
+docker run -p 8080:8080 goserv:$(cat VERSION)
 
 # 4. Test
 curl http://localhost:8080/
