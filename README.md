@@ -111,6 +111,49 @@ See `hooks/README.md` for more details.
 
 This repository uses [Dagger](https://dagger.io) for CI/CD automation. The `cicd/` directory contains a Dagger module written in Go that provides functions for building, testing, and delivering the application.
 
+### Using the Local CICD Pipeline simulation
+As you develop your code use the `local_*.sh` scripts in the `cicd` directory to simulate the different stages of the CICD pipeline. It will verify whether the Dagger logic you have defined in the `cicd` directory is compatible with the CICD pipeline service.
+
+#### Simulating a branch commit
+To simulate the Dagger code executed when you commit to a non-main branch of your repository run
+```
+./cicd/local_ci_pipeline.sh
+```
+
+This will call the Build and UnitTest functions defined in Dagger.
+
+#### Simulating a PR Merge
+To simulate the Dagger code executed when you merge to your main branch run
+```
+./cicd/local_ci_pipeline.sh --pipeline-trigger pr-merge
+```
+
+This calls the same Dagger code as above but specifies the release candidate flag to the functions.
+
+#### Simulate an Integration Test
+To simulate the Dagger code executed when during an integration test run
+```
+./cicd/local_iat_pipeline.sh
+```
+
+This calls the Dagger Deploy function followed by the IntegrationTest function.
+
+#### Simulate a Staging Test
+To simulate the Dagger code executed during a Staging test run
+```
+./cicd/local_staging_pipeline.sh
+```
+
+This calls the Dagger Deploy function for the current revision of your repository. It then calls the Validate function defined in Dagger. After these two functions succeed the pipeline then runs the Deploy function for the previous tagged release of your repository followed by the Validate function.
+
+#### Simulate Deployment
+To simulate the Dagger code executed during deployment run
+```
+./cicd/local_deploy_pipeline.sh
+```
+
+This function calls the Dagger Deploy function followed by the Validate function.
+
 ### Available Dagger Functions
 
 - **`build`**: Builds the Docker image using the Dockerfile, automatically reading version from VERSION file
