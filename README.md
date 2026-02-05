@@ -75,7 +75,8 @@ A containerized Go microservice that responds to HTTP requests with service meta
 │   ├── unit_test.sh        # Automated unit test script for goserv endpoints
 │   ├── integration_test.sh # Integration test orchestration script
 │   ├── performance_test.sh # k6-based performance testing
-│   └── acceptance_test.sh  # Acceptance testing script
+│   ├── acceptance_test.sh  # Acceptance testing script
+│   └── validate.sh         # Kubernetes deployment validation script
 ├── helm/
 │   └── goserv/
 │       ├── Chart.yaml      # Helm chart metadata
@@ -141,10 +142,14 @@ To simulate the Dagger code executed during integration and acceptance testing r
 ./cicd/local_iat_pipeline.sh
 ```
 
-This calls the Dagger Deploy function to install the Helm chart to your local Kubernetes cluster, sets up port-forwarding, and then runs the IntegrationTest function which executes:
-- Integration tests (`tests/integration_test.sh`)
-- Performance tests with k6 (`tests/performance_test.sh`)
-- Acceptance tests (`tests/acceptance_test.sh`)
+This pipeline executes the following steps:
+1. Deploys the application using the Dagger Deploy function
+2. Validates the deployment using the Dagger Validate function
+3. Sets up port-forwarding to the deployed service
+4. Runs the IntegrationTest function which executes:
+   - Integration tests (`tests/integration_test.sh`)
+   - Performance tests with k6 (`tests/performance_test.sh`)
+   - Acceptance tests (`tests/acceptance_test.sh`)
 
 ### Available Dagger Functions
 
@@ -166,6 +171,12 @@ This calls the Dagger Deploy function to install the Helm chart to your local Ku
   - Requires kubeconfig secret for cluster authentication
   - Configurable release name, namespace, and image settings
   - Pulls Helm chart from OCI registry
+- **`validate`**: Validates that a Kubernetes deployment is healthy and functioning correctly
+  - `--kubeconfig`: Kubernetes config file for cluster authentication
+  - `--release-name`: Helm release name (default: goserv)
+  - `--namespace`: Kubernetes namespace (default: goserv)
+  - Verifies Helm release status, pod health, service endpoints, and application endpoints
+  - Runs comprehensive validation tests from `tests/validate.sh`
 
 ### Prerequisites for Dagger
 
@@ -208,6 +219,13 @@ dagger -m cicd call deliver \
 
 # Deploy to Kubernetes cluster (requires kubeconfig)
 dagger -m cicd call deploy \
+  --source=. \
+  --kubeconfig=file:~/.kube/config \
+  --release-name=my-service \
+  --namespace=default
+
+# Validate Kubernetes deployment
+dagger -m cicd call validate \
   --source=. \
   --kubeconfig=file:~/.kube/config \
   --release-name=my-service \
