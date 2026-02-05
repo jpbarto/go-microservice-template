@@ -272,10 +272,32 @@ else
 fi
 
 ################################################################################
-# Step 4: Set Up Port Forward for Testing
+# Step 4: Validate Deployment using Dagger
 ################################################################################
 
-print_step "Step 4: Set Up Port Forward"
+print_step "Step 4: Validate Deployment"
+
+# Build Dagger Validate command
+VALIDATE_CMD="dagger -m cicd call validate --source=${SOURCE_DIR}"
+VALIDATE_CMD="${VALIDATE_CMD} --kubeconfig=file:${HOME}/.kube/config"
+VALIDATE_CMD="${VALIDATE_CMD} --release-name=${RELEASE_NAME}"
+VALIDATE_CMD="${VALIDATE_CMD} --namespace=${NAMESPACE}"
+
+print_info "Running: ${VALIDATE_CMD}"
+echo ""
+
+if eval "$VALIDATE_CMD"; then
+    print_success "Deployment validation passed"
+else
+    print_error "Deployment validation failed"
+    exit 1
+fi
+
+################################################################################
+# Step 5: Set Up Port Forward for Testing
+################################################################################
+
+print_step "Step 5: Set Up Port Forward"
 
 # Find an available local port
 LOCAL_PORT=8080
@@ -323,10 +345,10 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
 fi
 
 ################################################################################
-# Step 5: Run Integration Tests using Dagger
+# Step 6: Run Integration Tests using Dagger
 ################################################################################
 
-print_step "Step 5: Run Integration Tests"
+print_step "Step 6: Run Integration Tests"
 
 # Build Dagger IntegrationTest command
 # Use host.docker.internal to reach localhost from inside Dagger container
