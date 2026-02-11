@@ -333,12 +333,6 @@ func (m *Goserv) Deploy(
 		WithExec([]string{"sh", "-c", "mkdir -p /root/.kube && echo \"$KUBECONFIG_CONTENT\" > /root/.kube/config"}).
 		WithWorkdir("/workspace")
 
-	// Display available namespaces before deployment
-	container = container.WithExec([]string{"sh", "-c", "echo '=== Available Namespaces ===' && kubectl get namespaces"})
-
-	// Display existing helm releases in the target namespace
-	container = container.WithExec([]string{"sh", "-c", fmt.Sprintf("echo '=== Existing Helm Releases in %s ===' && helm list -n %s || echo 'No releases found or namespace does not exist'", namespace, namespace)})
-
 	// Perform the helm upgrade/install
 	output, err := container.
 		WithExec([]string{
