@@ -59,10 +59,6 @@ print_section() {
 # Test 1: Check if Helm release exists
 print_section "Checking Helm Release"
 test_helm_release_exists() {
-    kubectl get ns
-    helm list -n goserv
-    helm history goserv -n goserv
-
     if helm status "$RELEASE_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
         local status=$(helm status "$RELEASE_NAME" -n "$NAMESPACE" -o json | jq -r '.info.status')
         if [ "$status" = "deployed" ]; then
