@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"dagger/goserv/internal/dagger"
 )
@@ -338,6 +339,7 @@ func (m *Goserv) Deploy(
 	// Using --force to ensure each deployment creates a new revision,
 	// even when downgrading to an older version (e.g., in rollback scenarios)
 	output, err := container.
+		WithEnvVariable("CACHE_BUSTER", time.Now().String()).
 		WithExec([]string{
 			"helm", "upgrade", "--install", releaseName,
 			chartRef,
