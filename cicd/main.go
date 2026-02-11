@@ -318,17 +318,29 @@ func (m *Goserv) Deploy(
 	chartRef := helmRepository + "/charts/goserv:" + tag
 
 	// Create a container with kubectl and helm installed
-	output, err := dag.Container().
+	// Note: We need to install kubectl to list namespaces
+	container := dag.Container().
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{"apt-get", "install", "-y", "curl", "gnupg", "apt-transport-https"}).
 		WithExec([]string{"sh", "-c", "curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null"}).
 		WithExec([]string{"sh", "-c", "echo \"deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main\" | tee /etc/apt/sources.list.d/helm-stable-debian.list"}).
 		WithExec([]string{"apt-get", "update"}).
-		WithExec([]string{"apt-get", "install", "-y", "helm"}).
+		WithExec([]string{"apt-get", "install", "-y", "helm", "wget"}).
+		WithExec([]string{"sh", "-c", "curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"}).
+		WithExec([]string{"install", "-o", "root", "-g", "root", "-m", "0755", "kubectl", "/usr/local/bin/kubectl"}).
 		WithSecretVariable("KUBECONFIG_CONTENT", kubeconfig).
 		WithExec([]string{"sh", "-c", "mkdir -p /root/.kube && echo \"$KUBECONFIG_CONTENT\" > /root/.kube/config"}).
-		WithWorkdir("/workspace").
+		WithWorkdir("/workspace")
+
+	// Display available namespaces before deployment
+	container = container.WithExec([]string{"sh", "-c", "echo '=== Available Namespaces ===' && kubectl get namespaces"})
+
+	// Display existing helm releases in the target namespace
+	container = container.WithExec([]string{"sh", "-c", fmt.Sprintf("echo '=== Existing Helm Releases in %s ===' && helm list -n %s || echo 'No releases found or namespace does not exist'", namespace, namespace)})
+
+	// Perform the helm upgrade/install
+	output, err := container.
 		WithExec([]string{
 			"helm", "upgrade", "--install", releaseName,
 			chartRef,
@@ -358,6 +370,12 @@ func (m *Goserv) Validate(
 	// +optional
 	// Kubernetes namespace (default: goserv)
 	namespace string,
+	// +optional
+	// Expected version to validate (if not provided, reads from VERSION file)
+	expectedVersion string,
+	// +optional
+	// Build as release candidate (appends -rc to version)
+	releaseCandidate bool,
 ) (string, error) {
 	if releaseName == "" {
 		releaseName = "goserv"
@@ -365,6 +383,20 @@ func (m *Goserv) Validate(
 
 	if namespace == "" {
 		namespace = "goserv"
+	}
+
+	// If expectedVersion not provided, read from VERSION file
+	if expectedVersion == "" {
+		versionContent, err := source.File("VERSION").Contents(ctx)
+		if err != nil {
+			return "", fmt.Errorf("failed to read VERSION file: %w", err)
+		}
+		expectedVersion = strings.TrimSpace(versionContent)
+	}
+
+	// Append -rc suffix for release candidates
+	if releaseCandidate {
+		expectedVersion = expectedVersion + "-rc"
 	}
 
 	// Run the validation script in a container with kubectl, helm, and other dependencies
@@ -382,6 +414,7 @@ func (m *Goserv) Validate(
 		WithWorkdir("/workspace").
 		WithEnvVariable("RELEASE_NAME", releaseName).
 		WithEnvVariable("NAMESPACE", namespace).
+		WithEnvVariable("EXPECTED_VERSION", expectedVersion).
 		WithExec([]string{"bash", "/workspace/tests/validate.sh"}).
 		Stdout(ctx)
 

@@ -283,6 +283,10 @@ VALIDATE_CMD="${VALIDATE_CMD} --kubeconfig=file:${HOME}/.kube/config"
 VALIDATE_CMD="${VALIDATE_CMD} --release-name=${RELEASE_NAME}"
 VALIDATE_CMD="${VALIDATE_CMD} --namespace=${NAMESPACE}"
 
+if [ "$RELEASE_CANDIDATE" = true ]; then
+    VALIDATE_CMD="${VALIDATE_CMD} --release-candidate=true"
+fi
+
 print_info "Running: ${VALIDATE_CMD}"
 echo ""
 

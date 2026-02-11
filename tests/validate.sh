@@ -5,6 +5,7 @@ set -e
 RELEASE_NAME="${RELEASE_NAME:-goserv}"
 NAMESPACE="${NAMESPACE:-default}"
 SERVICE_NAME="${SERVICE_NAME:-goserv}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-}"
 TIMEOUT=5
 MAX_WAIT=60
 
@@ -26,6 +27,9 @@ echo -e "${BLUE}======================================${NC}"
 echo "Release Name: ${RELEASE_NAME}"
 echo "Namespace: ${NAMESPACE}"
 echo "Service Name: ${SERVICE_NAME}"
+if [ -n "${EXPECTED_VERSION}" ]; then
+    echo "Expected Version: ${EXPECTED_VERSION}"
+fi
 echo ""
 
 # Function to print test results
@@ -61,6 +65,16 @@ test_helm_release_exists() {
             print_test_result "Helm release exists and is deployed" "PASS"
         else
             print_test_result "Helm release exists and is deployed" "FAIL" "Status is: $status"
+        fi
+        
+        # Verify version if EXPECTED_VERSION is provided
+        if [ -n "${EXPECTED_VERSION}" ]; then
+            local chart_version=$(helm list -n "$NAMESPACE" -o json | jq -r ".[] | select(.name==\"$RELEASE_NAME\") | .chart" | sed 's/goserv-//')
+            if [ "$chart_version" = "$EXPECTED_VERSION" ]; then
+                print_test_result "Helm chart version matches expected ($EXPECTED_VERSION)" "PASS"
+            else
+                print_test_result "Helm chart version matches expected ($EXPECTED_VERSION)" "FAIL" "Deployed version is: $chart_version"
+            fi
         fi
     else
         print_test_result "Helm release exists and is deployed" "FAIL" "Helm release '$RELEASE_NAME' not found in namespace '$NAMESPACE'"

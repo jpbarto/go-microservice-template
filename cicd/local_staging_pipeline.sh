@@ -48,6 +48,7 @@ MAGENTA='\033[0;35m'
 NC='\033[0m' # No Color
 
 # Default configuration
+RELEASE_CANDIDATE=true  # Staging always uses release candidate builds
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COLIMA_PROFILE="acme-local"
 KUBECTL_CONTEXT="colima-${COLIMA_PROFILE}"
@@ -137,6 +138,7 @@ deploy_and_validate() {
     DEPLOY_CMD="${DEPLOY_CMD} --release-name=${RELEASE_NAME}"
     DEPLOY_CMD="${DEPLOY_CMD} --namespace=${NAMESPACE}"
     DEPLOY_CMD="${DEPLOY_CMD} --helm-repository=${HELM_REPOSITORY_URL}"
+    DEPLOY_CMD="${DEPLOY_CMD} --release-candidate=true"
     
     print_info "Running: ${DEPLOY_CMD}"
     echo ""
@@ -166,6 +168,7 @@ deploy_and_validate() {
     VALIDATE_CMD="${VALIDATE_CMD} --kubeconfig=file:${HOME}/.kube/config"
     VALIDATE_CMD="${VALIDATE_CMD} --release-name=${RELEASE_NAME}"
     VALIDATE_CMD="${VALIDATE_CMD} --namespace=${NAMESPACE}"
+    VALIDATE_CMD="${VALIDATE_CMD} --release-candidate=true"
     
     print_info "Running: ${VALIDATE_CMD}"
     echo ""
@@ -188,6 +191,7 @@ print_info "Colima profile: $COLIMA_PROFILE"
 print_info "Kubectl context: $KUBECTL_CONTEXT"
 print_info "Release name: $RELEASE_NAME"
 print_info "Namespace: $NAMESPACE"
+print_info "Release candidate: $RELEASE_CANDIDATE"
 
 # Save current branch/commit
 CURRENT_REF=$(git rev-parse --abbrev-ref HEAD)
@@ -200,6 +204,9 @@ print_info "Current ref: $CURRENT_REF"
 # Read VERSION file for current version
 if [ -f "$SOURCE_DIR/VERSION" ]; then
     CURRENT_VERSION=$(cat "$SOURCE_DIR/VERSION" | tr -d '[:space:]')
+    if [ "$RELEASE_CANDIDATE" = true ]; then
+        CURRENT_VERSION="${CURRENT_VERSION}-rc"
+    fi
     print_info "Current version: $CURRENT_VERSION"
 else
     print_error "VERSION file not found"
@@ -291,7 +298,7 @@ else
 fi
 
 ################################################################################
-# Step 3: Find Previous Release Tag
+# Step 3: Identify Previous Release Tag
 ################################################################################
 
 print_step "Step 3: Identify Previous Release Tag"
@@ -335,6 +342,9 @@ fi
 # Read VERSION from the previous release
 if [ -f "$SOURCE_DIR/VERSION" ]; then
     PREVIOUS_VERSION=$(cat "$SOURCE_DIR/VERSION" | tr -d '[:space:]')
+    if [ "$RELEASE_CANDIDATE" = true ]; then
+        PREVIOUS_VERSION="${PREVIOUS_VERSION}-rc"
+    fi
 else
     print_error "VERSION file not found in $PREVIOUS_TAG"
     git checkout "$CURRENT_REF"
