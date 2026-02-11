@@ -335,12 +335,15 @@ func (m *Goserv) Deploy(
 		WithWorkdir("/workspace")
 
 	// Perform the helm upgrade/install
+	// Using --force to ensure each deployment creates a new revision,
+	// even when downgrading to an older version (e.g., in rollback scenarios)
 	output, err := container.
 		WithExec([]string{
 			"helm", "upgrade", "--install", releaseName,
 			chartRef,
 			"--namespace", namespace,
 			"--create-namespace",
+			"--force",
 			"--wait",
 		}).
 		Stdout(ctx)
