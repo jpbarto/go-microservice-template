@@ -271,6 +271,7 @@ func (m *Goserv) Deliver(
 }
 
 // Deploy installs the Helm chart from a Helm repository to a Kubernetes cluster
+// +cache = "never"
 func (m *Goserv) Deploy(
 	ctx context.Context,
 	// Source directory containing the project
