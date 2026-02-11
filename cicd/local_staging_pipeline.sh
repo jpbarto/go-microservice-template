@@ -342,9 +342,6 @@ fi
 # Read VERSION from the previous release
 if [ -f "$SOURCE_DIR/VERSION" ]; then
     PREVIOUS_VERSION=$(cat "$SOURCE_DIR/VERSION" | tr -d '[:space:]')
-    if [ "$RELEASE_CANDIDATE" = true ]; then
-        PREVIOUS_VERSION="${PREVIOUS_VERSION}-rc"
-    fi
 else
     print_error "VERSION file not found in $PREVIOUS_TAG"
     git checkout "$CURRENT_REF"
