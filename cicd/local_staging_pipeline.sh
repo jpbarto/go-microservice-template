@@ -129,6 +129,7 @@ print_phase() {
 deploy_and_validate() {
     local version_label="$1"
     local version="$2"
+    local is_release_candidate="$3"  # true or false
     
     print_phase "Deploying $version_label (v$version)"
     
@@ -138,7 +139,10 @@ deploy_and_validate() {
     DEPLOY_CMD="${DEPLOY_CMD} --release-name=${RELEASE_NAME}"
     DEPLOY_CMD="${DEPLOY_CMD} --namespace=${NAMESPACE}"
     DEPLOY_CMD="${DEPLOY_CMD} --helm-repository=${HELM_REPOSITORY_URL}"
-    DEPLOY_CMD="${DEPLOY_CMD} --release-candidate=true"
+    
+    if [ "$is_release_candidate" = "true" ]; then
+        DEPLOY_CMD="${DEPLOY_CMD} --release-candidate=true"
+    fi
     
     print_info "Running: ${DEPLOY_CMD}"
     echo ""
@@ -168,7 +172,10 @@ deploy_and_validate() {
     VALIDATE_CMD="${VALIDATE_CMD} --kubeconfig=file:${HOME}/.kube/config"
     VALIDATE_CMD="${VALIDATE_CMD} --release-name=${RELEASE_NAME}"
     VALIDATE_CMD="${VALIDATE_CMD} --namespace=${NAMESPACE}"
-    VALIDATE_CMD="${VALIDATE_CMD} --release-candidate=true"
+    
+    if [ "$is_release_candidate" = "true" ]; then
+        VALIDATE_CMD="${VALIDATE_CMD} --release-candidate=true"
+    fi
     
     print_info "Running: ${VALIDATE_CMD}"
     echo ""
@@ -321,7 +328,7 @@ print_success "Found previous release tag: $PREVIOUS_TAG"
 # Phase 1: Deploy and Validate Current Version (Green Deployment)
 ################################################################################
 
-deploy_and_validate "Current Version (Green)" "$CURRENT_VERSION"
+deploy_and_validate "Current Version (Green)" "$CURRENT_VERSION" "true"
 
 ################################################################################
 # Phase 2: Deploy and Validate Previous Release (Blue Deployment)
@@ -348,7 +355,7 @@ else
     exit 1
 fi
 
-deploy_and_validate "Previous Release (Blue)" "$PREVIOUS_VERSION"
+deploy_and_validate "Previous Release (Blue)" "$PREVIOUS_VERSION" "false"
 
 ################################################################################
 # Phase 3: Re-deploy and Validate Current Version (Back to Green)
@@ -365,7 +372,7 @@ else
     exit 1
 fi
 
-deploy_and_validate "Current Version (Green - Final)" "$CURRENT_VERSION"
+deploy_and_validate "Current Version (Green - Final)" "$CURRENT_VERSION" "true"
 
 ################################################################################
 # Pipeline Summary
