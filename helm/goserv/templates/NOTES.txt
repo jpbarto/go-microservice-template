@@ -23,7 +23,7 @@
 
 2. Configuration:
    Service Name: {{ .Values.application.serviceName }}
-   Service Version: {{ .Values.application.serviceVersion }}
+   Service Version: {{ .Chart.AppVersion }}
    {{- if .Values.application.dependencyUrl }}
    Dependency URL: {{ .Values.application.dependencyUrl }}
    {{- else }}

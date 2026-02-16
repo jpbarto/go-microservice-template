@@ -95,7 +95,6 @@ affinity: {}
 # Application configuration
 application:
   serviceName: "goserv"
-  serviceVersion: "1.0.0"
   port: "8080"
   # URL of the dependency service to call
   # Example: "http://another-service:80/"
