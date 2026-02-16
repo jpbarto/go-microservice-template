@@ -1,0 +1,50 @@
+# Create the k8s namespace for goserv
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: goserv
+
+---
+# Create an ArgoGD project for goserv
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: goserv-proj
+  namespace: argocd
+spec:
+  description: ArgoCD project for goserv application
+  sourceRepos:
+    - 'oci://ttl.sh/charts/goserv'
+  destinations:
+    - namespace: goserv
+      server: 'https://kubernetes.default.svc'
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceBlacklist:
+    - group: '*'
+      kind: 'Event'
+
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: goserv
+  namespace: argocd
+spec:
+  project: goserv-proj
+  source:
+    repoURL: 'oci://ttl.sh/charts/goserv'
+    chart: goserv
+    targetRevision: 1.0.13
+    helm:
+      parameters:
+        - name: 'application.dependencyUrl'
+          value: 'https://api.restful-api.dev/objects/6'
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: goserv
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
