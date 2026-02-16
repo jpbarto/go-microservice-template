@@ -24,7 +24,8 @@ build/
 
 # CA bundle with certificates (including Netskope)
 .ca-bundle.pem
-.certs/
+.certs/*.pem
+.certs/*.crt
 
 # IDE
 .idea/
