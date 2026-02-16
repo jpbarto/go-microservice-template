@@ -15,6 +15,7 @@ spec:
   description: ArgoCD project for goserv application
   sourceRepos:
     - 'oci://ttl.sh/charts/goserv'
+    - 'https://github.com/jpbarto/argocd-eval.git'
   destinations:
     - namespace: goserv
       server: 'https://kubernetes.default.svc'
@@ -33,14 +34,16 @@ metadata:
   namespace: argocd
 spec:
   project: goserv-proj
-  source:
-    repoURL: 'oci://ttl.sh/charts/goserv'
-    chart: goserv
-    targetRevision: 1.0.13
-    helm:
-      parameters:
-        - name: 'application.dependencyUrl'
-          value: 'https://api.restful-api.dev/objects/6'
+  sources:
+    - repoURL: 'oci://ttl.sh/charts/goserv'
+      chart: goserv
+      targetRevision: 1.0.13
+      helm:
+        valueFiles:
+          - $values/env-values.yaml
+    - repoURL: 'https://github.com/jpbarto/argocd-eval.git'
+      targetRevision: HEAD
+      ref: values
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: goserv
