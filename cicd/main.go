@@ -133,12 +133,16 @@ func (m *Goserv) IntegrationTest(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
-	// Target host where goserv is deployed
+	// +optional
+	// Target host where goserv is deployed (default: localhost)
 	targetHost string,
 	// +optional
 	// Target port (default: 8080)
 	targetPort string,
 ) (string, error) {
+	if targetHost == "" {
+		targetHost = "localhost"
+	}
 	if targetPort == "" {
 		targetPort = "8080"
 	}
@@ -170,9 +174,11 @@ func (m *Goserv) Deliver(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
-	// Container repository (example: ttl.sh)
+	// +optional
+	// Container repository (default: ttl.sh)
 	containerRepository string,
-	// Helm chart repository URL (example: oci://registry-1.docker.io/myuser)
+	// +optional
+	// Helm chart repository URL (default: oci://ttl.sh)
 	helmRepository string,
 	// +optional
 	// Pre-built OCI image tarball (if not provided, will build from source)
@@ -181,6 +187,14 @@ func (m *Goserv) Deliver(
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
 ) (string, error) {
+	// Apply defaults
+	if containerRepository == "" {
+		containerRepository = "ttl.sh"
+	}
+	if helmRepository == "" {
+		helmRepository = "oci://ttl.sh"
+	}
+
 	// Read version from VERSION file
 	versionContent, err := source.File("VERSION").Contents(ctx)
 	if err != nil {
