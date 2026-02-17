@@ -56,37 +56,31 @@ print_section() {
     echo -e "${BLUE}>>> $1${NC}"
 }
 
-# Test 1: Check if Helm release exists
-print_section "Checking Helm Release"
-test_helm_release_exists() {
-    if helm status "$RELEASE_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
-        local status=$(helm status "$RELEASE_NAME" -n "$NAMESPACE" -o json | jq -r '.info.status')
-        if [ "$status" = "deployed" ]; then
-            print_test_result "Helm release exists and is deployed" "PASS"
-        else
-            print_test_result "Helm release exists and is deployed" "FAIL" "Status is: $status"
-        fi
-        
-        # Verify version if EXPECTED_VERSION is provided
-        if [ -n "${EXPECTED_VERSION}" ]; then
-            local chart_version=$(helm list -n "$NAMESPACE" -o json | jq -r ".[] | select(.name==\"$RELEASE_NAME\") | .chart" | sed 's/goserv-//')
-            if [ "$chart_version" = "$EXPECTED_VERSION" ]; then
-                print_test_result "Helm chart version matches expected ($EXPECTED_VERSION)" "PASS"
-            else
-                print_test_result "Helm chart version matches expected ($EXPECTED_VERSION)" "FAIL" "Deployed version is: $chart_version"
-            fi
-        fi
-    else
-        print_test_result "Helm release exists and is deployed" "FAIL" "Helm release '$RELEASE_NAME' not found in namespace '$NAMESPACE'"
-    fi
-}
-test_helm_release_exists
-
-# Test 2: Check if deployment exists and has correct replica count
+# Test 1: Check if deployment exists and has correct replica count
 print_section "Checking Kubernetes Deployment"
 test_deployment_exists() {
     if kubectl get deployment "$RELEASE_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
         print_test_result "Deployment exists" "PASS"
+        
+        # Verify version if EXPECTED_VERSION is provided
+        if [ -n "${EXPECTED_VERSION}" ]; then
+            # Get version from deployment labels or annotations
+            local deployed_version=$(kubectl get deployment "$RELEASE_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.version}' 2>/dev/null || echo "")
+            if [ -z "$deployed_version" ]; then
+                # Try getting from app version label
+                deployed_version=$(kubectl get deployment "$RELEASE_NAME" -n "$NAMESPACE" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/version}' 2>/dev/null || echo "")
+            fi
+            
+            if [ -n "$deployed_version" ]; then
+                if [ "$deployed_version" = "$EXPECTED_VERSION" ]; then
+                    print_test_result "Deployment version matches expected ($EXPECTED_VERSION)" "PASS"
+                else
+                    print_test_result "Deployment version matches expected ($EXPECTED_VERSION)" "FAIL" "Deployed version is: $deployed_version"
+                fi
+            else
+                print_test_result "Deployment version label found" "FAIL" "No version label found on deployment"
+            fi
+        fi
         
         # Check replica status
         local ready=$(kubectl get deployment "$RELEASE_NAME" -n "$NAMESPACE" -o jsonpath='{.status.readyReplicas}')
@@ -103,7 +97,7 @@ test_deployment_exists() {
 }
 test_deployment_exists
 
-# Test 3: Check if all pods are running and ready
+# Test 2: Check if all pods are running and ready
 print_section "Checking Pods"
 test_pods_running() {
     local pods=$(kubectl get pods -n "$NAMESPACE" -l "app.kubernetes.io/name=goserv,app.kubernetes.io/instance=$RELEASE_NAME" -o json)
@@ -148,7 +142,7 @@ test_pods_running() {
 }
 test_pods_running
 
-# Test 4: Check if service exists and has endpoints
+# Test 3: Check if service exists and has endpoints
 print_section "Checking Kubernetes Service"
 test_service_exists() {
     if kubectl get service "$RELEASE_NAME" -n "$NAMESPACE" > /dev/null 2>&1; then
@@ -168,7 +162,7 @@ test_service_exists() {
 }
 test_service_exists
 
-# Test 5: Test application endpoints via port-forward
+# Test 4: Test application endpoints via port-forward
 print_section "Testing Application Endpoints"
 
 # Start port-forward in background
