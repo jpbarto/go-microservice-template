@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 
 	"dagger/goserv/internal/dagger"
 )
@@ -22,12 +23,8 @@ func (m *Goserv) UnitTest(
 		// This will automatically select the appropriate platform variant for the host
 		appContainer = dag.Container().Import(buildArtifact)
 	} else {
-		// Build from source if no tarball provided
-		tarball, err := m.Build(ctx, source, false)
-		if err != nil {
-			return "", err
-		}
-		appContainer = dag.Container().Import(tarball)
+		// Report an error if no build artifact is provided, since the Deliver function requires building from source
+		return "", fmt.Errorf("no build artifact provided; building from source is required for testing")
 	}
 
 	// Start the application container as a service on port 8080

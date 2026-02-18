@@ -46,31 +46,18 @@ func (m *Goserv) Deliver(
 		tag = tag + "-rc"
 	}
 
-	// Build multi-architecture container images from source
-	// Note: buildArtifact parameter is accepted for interface compatibility but not used,
-	// since publishing requires building platform variants directly from source
-	platforms := []dagger.Platform{
-		"linux/amd64",
-		"linux/arm64",
+	// Import the pre-built OCI tarball
+	// The Import method preserves the multi-architecture manifest from the tarball
+	if buildArtifact == nil {
+		return "", fmt.Errorf("buildArtifact is required; use Build function to create OCI tarball")
 	}
 
-	platformVariants := make([]*dagger.Container, 0, len(platforms))
-	for _, platform := range platforms {
-		variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-			Platform: platform,
-			BuildArgs: []dagger.BuildArg{
-				{Name: "VERSION", Value: tag},
-			},
-		})
-		platformVariants = append(platformVariants, variant)
-	}
+	container := dag.Container().Import(buildArtifact)
 
 	// Publish multi-architecture container to registry
 	imageRef := containerRepository + "/goserv:" + tag
 
-	address, err := platformVariants[0].Publish(ctx, imageRef, dagger.ContainerPublishOpts{
-		PlatformVariants: platformVariants[1:],
-	})
+	address, err := container.Publish(ctx, imageRef)
 	if err != nil {
 		return "", fmt.Errorf("failed to publish container: %w", err)
 	}
