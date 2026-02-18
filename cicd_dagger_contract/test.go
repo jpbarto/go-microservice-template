@@ -12,8 +12,8 @@ func (m *Goserv) UnitTest(
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Pre-built OCI image tarball (if not provided, will build from source)
-	imageTarball *dagger.File,
+	// Build output from the Build function (if not provided, will build from source)
+	buildArtifact *dagger.File,
 ) (string, error) {
 	// Print message
 	output, err := dag.Container().

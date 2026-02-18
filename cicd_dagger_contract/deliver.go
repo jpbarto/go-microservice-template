@@ -18,8 +18,8 @@ func (m *Goserv) Deliver(
 	// Helm chart repository URL (default: oci://ttl.sh)
 	helmRepository string,
 	// +optional
-	// Pre-built OCI image tarball (if not provided, will build from source)
-	imageTarball *dagger.File,
+	// Build output from the Build function (if not provided, will build from source)
+	buildArtifact *dagger.File,
 	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
