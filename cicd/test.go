@@ -13,14 +13,14 @@ func (m *Goserv) UnitTest(
 	source *dagger.Directory,
 	// +optional
 	// Pre-built OCI image tarball (if not provided, will build from source)
-	imageTarball *dagger.File,
+	buildArtifact *dagger.File,
 ) (string, error) {
 	var appContainer *dagger.Container
 
-	if imageTarball != nil {
+	if buildArtifact != nil {
 		// Import the pre-built OCI image
 		// This will automatically select the appropriate platform variant for the host
-		appContainer = dag.Container().Import(imageTarball)
+		appContainer = dag.Container().Import(buildArtifact)
 	} else {
 		// Build from source if no tarball provided
 		tarball, err := m.Build(ctx, source, false)

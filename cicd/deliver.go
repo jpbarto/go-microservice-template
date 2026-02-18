@@ -21,7 +21,7 @@ func (m *Goserv) Deliver(
 	helmRepository string,
 	// +optional
 	// Pre-built OCI image tarball (if not provided, will build from source)
-	imageTarball *dagger.File,
+	buildArtifact *dagger.File,
 	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
@@ -46,46 +46,23 @@ func (m *Goserv) Deliver(
 		tag = tag + "-rc"
 	}
 
-	// Get or build the container images
-	// If tarball is provided, we need to rebuild from source to get platform variants
-	// since Import() doesn't preserve multi-arch manifests
-	var platformVariants []*dagger.Container
+	// Build multi-architecture container images from source
+	// Note: buildArtifact parameter is accepted for interface compatibility but not used,
+	// since publishing requires building platform variants directly from source
+	platforms := []dagger.Platform{
+		"linux/amd64",
+		"linux/arm64",
+	}
 
-	if imageTarball != nil {
-		// Even if tarball exists, we need to rebuild to get proper platform variants for publishing
-		// The tarball is useful for testing, but publishing requires the container objects
-		platforms := []dagger.Platform{
-			"linux/amd64",
-			"linux/arm64",
-		}
-
-		platformVariants = make([]*dagger.Container, 0, len(platforms))
-		for _, platform := range platforms {
-			variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-				Platform: platform,
-				BuildArgs: []dagger.BuildArg{
-					{Name: "VERSION", Value: tag},
-				},
-			})
-			platformVariants = append(platformVariants, variant)
-		}
-	} else {
-		// Build from source
-		platforms := []dagger.Platform{
-			"linux/amd64",
-			"linux/arm64",
-		}
-
-		platformVariants = make([]*dagger.Container, 0, len(platforms))
-		for _, platform := range platforms {
-			variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
-				Platform: platform,
-				BuildArgs: []dagger.BuildArg{
-					{Name: "VERSION", Value: tag},
-				},
-			})
-			platformVariants = append(platformVariants, variant)
-		}
+	platformVariants := make([]*dagger.Container, 0, len(platforms))
+	for _, platform := range platforms {
+		variant := source.DockerBuild(dagger.DirectoryDockerBuildOpts{
+			Platform: platform,
+			BuildArgs: []dagger.BuildArg{
+				{Name: "VERSION", Value: tag},
+			},
+		})
+		platformVariants = append(platformVariants, variant)
 	}
 
 	// Publish multi-architecture container to registry
