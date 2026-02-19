@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"dagger/goserv/internal/dagger"
 )
@@ -25,7 +27,7 @@ func (m *Goserv) Deliver(
 	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
-) (string, error) {
+) (*dagger.File, error) {
 	// Apply defaults
 	if containerRepository == "" {
 		containerRepository = "ttl.sh"
@@ -37,7 +39,7 @@ func (m *Goserv) Deliver(
 	// Read version from VERSION file
 	versionContent, err := source.File("VERSION").Contents(ctx)
 	if err != nil {
-		return "", fmt.Errorf("failed to read VERSION file: %w", err)
+		return nil, fmt.Errorf("failed to read VERSION file: %w", err)
 	}
 	tag := strings.TrimSpace(versionContent)
 
@@ -49,7 +51,7 @@ func (m *Goserv) Deliver(
 	// Import the pre-built OCI tarball
 	// The Import method preserves the multi-architecture manifest from the tarball
 	if buildArtifact == nil {
-		return "", fmt.Errorf("buildArtifact is required; use Build function to create OCI tarball")
+		return nil, fmt.Errorf("buildArtifact is required; use Build function to create OCI tarball")
 	}
 
 	container := dag.Container().Import(buildArtifact)
@@ -59,11 +61,11 @@ func (m *Goserv) Deliver(
 
 	address, err := container.Publish(ctx, imageRef)
 	if err != nil {
-		return "", fmt.Errorf("failed to publish container: %w", err)
+		return nil, fmt.Errorf("failed to publish container: %w", err)
 	}
 
 	// Package and publish Helm chart
-	helmOutput, err := dag.Container().
+	_, err = dag.Container().
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{"apt-get", "install", "-y", "curl", "gnupg", "apt-transport-https", "wget"}).
@@ -81,9 +83,30 @@ func (m *Goserv) Deliver(
 		Stdout(ctx)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to publish Helm chart: %w", err)
+		return nil, fmt.Errorf("failed to publish Helm chart: %w", err)
 	}
 
 	chartRef := helmRepository + "/charts/goserv:" + tag
-	return fmt.Sprintf("Container: %s (multi-arch: linux/amd64, linux/arm64)\nHelm chart: %s\nHelm output: %s", address, chartRef, helmOutput), nil
+
+	// Create delivery context JSON
+	deliveryContext := map[string]interface{}{
+		"timestamp":           time.Now().Format(time.RFC3339),
+		"imageReference":      address,
+		"chartReference":      chartRef,
+		"version":             tag,
+		"containerRepository": containerRepository,
+		"helmRepository":      helmRepository,
+		"releaseCandidate":    releaseCandidate,
+		"architectures":       []string{"linux/amd64", "linux/arm64"},
+	}
+
+	contextJSON, err := json.MarshalIndent(deliveryContext, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal delivery context: %w", err)
+	}
+
+	// Return delivery context as a file
+	return dag.Directory().
+		WithNewFile("deliveryContext", string(contextJSON)).
+		File("deliveryContext"), nil
 }

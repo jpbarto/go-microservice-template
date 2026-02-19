@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"dagger/goserv/internal/dagger"
 )
@@ -16,34 +18,43 @@ func (m *Goserv) Validate(
 	// Kubernetes config file content
 	kubeconfig *dagger.Secret,
 	// +optional
-	// Release name (default: goserv)
-	releaseName string,
-	// +optional
-	// Kubernetes namespace (default: goserv)
-	namespace string,
-	// +optional
-	// Expected version to validate (if not provided, reads from VERSION file)
-	expectedVersion string,
+	// AWS configuration
+	awsconfig *dagger.Secret,
+	// Deployment context from Deploy function
+	deploymentContext *dagger.File,
 	// +optional
 	// Build as release candidate (appends -rc to version)
 	releaseCandidate bool,
-) (string, error) {
-	if releaseName == "" {
-		releaseName = "goserv"
-	}
+) (*dagger.File, error) {
+	// Extract deployment information from context if provided
+	releaseName := "goserv"
+	namespace := "goserv"
 
-	if namespace == "" {
-		namespace = "goserv"
-	}
-
-	// If expectedVersion not provided, read from VERSION file
-	if expectedVersion == "" {
-		versionContent, err := source.File("VERSION").Contents(ctx)
-		if err != nil {
-			return "", fmt.Errorf("failed to read VERSION file: %w", err)
+	var endpoint string
+	if deploymentContext != nil {
+		contextContent, err := deploymentContext.Contents(ctx)
+		if err == nil {
+			var depContext map[string]interface{}
+			if err := json.Unmarshal([]byte(contextContent), &depContext); err == nil {
+				if ep, ok := depContext["endpoint"].(string); ok {
+					endpoint = ep
+				}
+				if rn, ok := depContext["releaseName"].(string); ok && releaseName == "goserv" {
+					releaseName = rn
+				}
+				if ns, ok := depContext["namespace"].(string); ok && namespace == "goserv" {
+					namespace = ns
+				}
+			}
 		}
-		expectedVersion = strings.TrimSpace(versionContent)
 	}
+
+	var expectedVersion string
+	versionContent, err := source.File("VERSION").Contents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read VERSION file: %w", err)
+	}
+	expectedVersion = strings.TrimSpace(versionContent)
 
 	// Append -rc suffix for release candidates
 	if releaseCandidate {
@@ -70,8 +81,35 @@ func (m *Goserv) Validate(
 		Stdout(ctx)
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return validationOutput, nil
+	// Determine validation status from output
+	status := "healthy"
+	if err != nil {
+		status = "failed"
+	}
+
+	// Create validation context JSON
+	validationContext := map[string]interface{}{
+		"timestamp":        time.Now().Format(time.RFC3339),
+		"releaseName":      releaseName,
+		"endpoint":         endpoint,
+		"namespace":        namespace,
+		"expectedVersion":  expectedVersion,
+		"status":           status,
+		"healthChecks":     []string{"pod-ready", "service-available"},
+		"readinessChecks":  []string{"http-200"},
+		"validationOutput": validationOutput,
+	}
+
+	contextJSON, err := json.MarshalIndent(validationContext, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal validation context: %w", err)
+	}
+
+	// Return validation context as a file
+	return dag.Directory().
+		WithNewFile("validationContext", string(contextJSON)).
+		File("validationContext"), nil
 }
