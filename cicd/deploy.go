@@ -15,31 +15,24 @@ func (m *Goserv) Deploy(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
+	// +optional
+	// AWS configuration file content
+	awsconfig *dagger.Secret,
+	// +optional
 	// Kubernetes config file content
 	kubeconfig *dagger.Secret,
 	// +optional
 	// Helm chart repository URL (default: oci://ttl.sh)
 	helmRepository string,
 	// +optional
-	// Release name (default: goserv)
-	releaseName string,
-	// +optional
-	// Kubernetes namespace (default: goserv)
-	namespace string,
+	// Container repository URL (default: ttl.sh)
+	containerRepository string,
 	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
 ) (string, error) {
-	if releaseName == "" {
-		releaseName = "goserv"
-	}
-
 	if helmRepository == "" {
 		helmRepository = "oci://ttl.sh"
-	}
-
-	if namespace == "" {
-		namespace = "goserv"
 	}
 
 	// Read version from VERSION file
@@ -76,6 +69,8 @@ func (m *Goserv) Deploy(
 	// Perform the helm upgrade/install
 	// Using --force to ensure each deployment creates a new revision,
 	// even when downgrading to an older version (e.g., in rollback scenarios)
+	releaseName := "goserv"
+	namespace := "goserv"
 	output, err := container.
 		WithEnvVariable("CACHE_BUSTER", time.Now().String()).
 		WithExec([]string{

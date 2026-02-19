@@ -57,17 +57,11 @@ func (m *Goserv) IntegrationTest(
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Target host where goserv is deployed (default: localhost)
-	targetHost string,
-	// +optional
-	// Target port (default: 8080)
-	targetPort string,
+	// Target URL where goserv is deployed (default: http://localhost:8080)
+	targetUrl string,
 ) (string, error) {
-	if targetHost == "" {
-		targetHost = "localhost"
-	}
-	if targetPort == "" {
-		targetPort = "8080"
+	if targetUrl == "" {
+		targetUrl = "http://localhost:8080"
 	}
 
 	// Run the integration test script in a container with k6 and other dependencies
@@ -80,9 +74,8 @@ func (m *Goserv) IntegrationTest(
 		WithExec([]string{"sh", "-c", "wget -qO- https://github.com/grafana/k6/releases/download/v0.49.0/k6-v0.49.0-linux-amd64.tar.gz | tar xz --strip-components=1 -C /usr/local/bin k6-v0.49.0-linux-amd64/k6"}).
 		WithMountedDirectory("/workspace", source).
 		WithWorkdir("/workspace").
-		WithEnvVariable("TEST_HOST", targetHost).
-		WithEnvVariable("TEST_PORT", targetPort).
-		WithExec([]string{"bash", "/workspace/tests/integration_test.sh", targetHost, targetPort}).
+		WithEnvVariable("TEST_URL", targetUrl).
+		WithExec([]string{"bash", "/workspace/tests/integration_test.sh", targetUrl}).
 		Stdout(ctx)
 
 	if err != nil {
