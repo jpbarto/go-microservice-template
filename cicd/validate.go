@@ -63,7 +63,7 @@ func (m *Goserv) Validate(
 
 	// Run the validation script in a container with kubectl, helm, and other dependencies
 	// Install kubectl and helm as binaries instead of from apt repositories
-	validationOutput, err := dag.Container().
+	container := dag.Container().
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{"apt-get", "install", "-y", "bash", "curl", "jq", "ca-certificates", "wget"}).
@@ -76,12 +76,43 @@ func (m *Goserv) Validate(
 		WithWorkdir("/workspace").
 		WithEnvVariable("RELEASE_NAME", releaseName).
 		WithEnvVariable("NAMESPACE", namespace).
-		WithEnvVariable("EXPECTED_VERSION", expectedVersion).
+		WithEnvVariable("EXPECTED_VERSION", expectedVersion)
+
+	validationOutput, err := container.
 		WithExec([]string{"bash", "/workspace/tests/validate.sh"}).
 		Stdout(ctx)
 
 	if err != nil {
 		return nil, err
+	}
+
+	// Get service information from Kubernetes
+	serviceName := releaseName
+	servicePort := ""
+
+	// Query for the service to get the port
+	serviceInfo, err := container.
+		WithExec([]string{"kubectl", "-n", namespace, "get", "svc", releaseName, "-o", "json"}).
+		Stdout(ctx)
+
+	if err == nil {
+		// Parse the service JSON to extract the port
+		var svcData map[string]interface{}
+		if err := json.Unmarshal([]byte(serviceInfo), &svcData); err == nil {
+			if spec, ok := svcData["spec"].(map[string]interface{}); ok {
+				if ports, ok := spec["ports"].([]interface{}); ok && len(ports) > 0 {
+					if port, ok := ports[0].(map[string]interface{}); ok {
+						if targetPort, ok := port["targetPort"].(float64); ok {
+							servicePort = fmt.Sprintf("%.0f", targetPort)
+						} else if targetPort, ok := port["targetPort"].(string); ok {
+							servicePort = targetPort
+						} else if p, ok := port["port"].(float64); ok {
+							servicePort = fmt.Sprintf("%.0f", p)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// Determine validation status from output
@@ -101,6 +132,8 @@ func (m *Goserv) Validate(
 		"healthChecks":     []string{"pod-ready", "service-available"},
 		"readinessChecks":  []string{"http-200"},
 		"validationOutput": validationOutput,
+		"serviceName":      serviceName,
+		"servicePort":      servicePort,
 	}
 
 	contextJSON, err := json.MarshalIndent(validationContext, "", "  ")

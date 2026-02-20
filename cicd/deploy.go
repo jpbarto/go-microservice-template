@@ -98,13 +98,6 @@ func (m *Goserv) Deploy(
 			WithExec([]string{"sh", "-c", "mkdir -p /root/.kube && echo \"$KUBECONFIG_CONTENT\" > /root/.kube/config"})
 	}
 
-	// Mount awsconfig if provided
-	if awsconfig != nil {
-		container = container.
-			WithSecretVariable("AWS_CONFIG_CONTENT", awsconfig).
-			WithExec([]string{"sh", "-c", "mkdir -p /root/.aws && echo \"$AWS_CONFIG_CONTENT\" > /root/.aws/config"})
-	}
-
 	container = container.WithWorkdir("/workspace")
 
 	// Perform the helm upgrade/install

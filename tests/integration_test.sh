@@ -11,12 +11,11 @@
 #   - All test dependencies installed (k6, curl, jq)
 #
 # Usage:
-#   ./integration_test.sh [HOST] [PORT]
+#   ./integration_test.sh [TEST_URL]
 #
 # Examples:
-#   ./integration_test.sh                    # Uses localhost:8080
-#   ./integration_test.sh localhost 8080     # Explicit host and port
-#   ./integration_test.sh myservice.local 80
+#   ./integration_test.sh http://localhost:8080
+#   ./integration_test.sh http://myservice.local:80
 ################################################################################
 
 set -e  # Exit on error
@@ -30,8 +29,7 @@ CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
 # Configuration
-TEST_HOST="${1:-localhost}"
-TEST_PORT="${2:-8080}"
+TEST_URL="${1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Test results tracking
@@ -118,14 +116,14 @@ run_test() {
 ################################################################################
 
 print_header "Integration Test Suite"
-print_info "Target: ${TEST_HOST}:${TEST_PORT}"
+print_info "Target: ${TEST_URL}"
 print_info "Test Directory: ${SCRIPT_DIR}"
 echo ""
 
 # Check if service is reachable
 print_info "Verifying service availability..."
-if ! curl -s -f -o /dev/null --max-time 5 "http://${TEST_HOST}:${TEST_PORT}/health"; then
-    print_error "Service is not reachable at http://${TEST_HOST}:${TEST_PORT}"
+if ! curl -s -f -o /dev/null --max-time 5 "${TEST_URL}/health"; then
+    print_error "Service is not reachable at ${TEST_URL}"
     print_error "Please ensure the goserv application is running before running tests"
     exit 1
 fi
@@ -141,7 +139,7 @@ set +e
 
 run_test "Performance Tests" \
     "${SCRIPT_DIR}/performance_test.sh" \
-    "${TEST_HOST} ${TEST_PORT}"
+    "${TEST_URL}"
 
 ################################################################################
 # Test 2: Acceptance Tests
@@ -149,7 +147,7 @@ run_test "Performance Tests" \
 
 run_test "Acceptance Tests" \
     "${SCRIPT_DIR}/acceptance_test.sh" \
-    "${TEST_HOST} ${TEST_PORT}"
+    "${TEST_URL}"
 
 ################################################################################
 # Test Summary

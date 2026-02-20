@@ -69,55 +69,53 @@ func (m *Goserv) IntegrationTest(
 	// Validation context from Validate function
 	validationContext *dagger.File,
 ) (string, error) {
-	var targetHost string
-	var targetPort string
+	var serviceName, namespace, servicePort string
 
-	// Extract endpoint from deployment context if provided
-	if deploymentContext != nil {
-		contextContent, err := deploymentContext.Contents(ctx)
-		if err == nil {
-			var depContext map[string]interface{}
-			if err := json.Unmarshal([]byte(contextContent), &depContext); err == nil {
-				if endpoint, ok := depContext["endpoint"].(string); ok {
-					// Endpoint format: http://service.namespace.svc.cluster.local:8080
-					// Extract just the URL as targetHost
-					targetHost = endpoint
-					// For scripts expecting separate host/port, parse if needed
-					// For now, we'll pass the full endpoint and empty port
-					targetPort = ""
-				}
-			}
-		}
-	}
-
-	// Check validation status if validation context provided
+	// Extract service information from validation context if provided
 	if validationContext != nil {
 		contextContent, err := validationContext.Contents(ctx)
 		if err == nil {
 			var valContext map[string]interface{}
 			if err := json.Unmarshal([]byte(contextContent), &valContext); err == nil {
+				// Check validation status first
 				if status, ok := valContext["status"].(string); ok && status != "healthy" {
 					return "", fmt.Errorf("skipping integration tests: validation status is %s", status)
+				}
+
+				// Extract service details
+				if sn, ok := valContext["serviceName"].(string); ok {
+					serviceName = sn
+				}
+				if ns, ok := valContext["namespace"].(string); ok {
+					namespace = ns
+				}
+				if sp, ok := valContext["servicePort"].(string); ok {
+					servicePort = sp
 				}
 			}
 		}
 	}
 
 	// Use defaults if not extracted from context
-	if targetHost == "" {
-		targetHost = "localhost"
+	if serviceName == "" {
+		serviceName = "goserv"
 	}
-	if targetPort == "" {
-		targetPort = "8080"
+	if namespace == "" {
+		namespace = "goserv"
 	}
-	// Run the integration test script in a container with k6 and other dependencies
+	if servicePort == "" {
+		servicePort = "8080"
+	}
+
+	// Run the integration test script in a container with k6, kubectl, and other dependencies
 	// The integration_test.sh script will call performance_test.sh and acceptance_test.sh
-	// Install k6 directly as a binary instead of from apt repository
 	testContainer := dag.Container().
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{"apt-get", "install", "-y", "bash", "curl", "jq", "ca-certificates", "wget", "tar", "xz-utils"}).
 		WithExec([]string{"sh", "-c", "wget -qO- https://github.com/grafana/k6/releases/download/v0.49.0/k6-v0.49.0-linux-amd64.tar.gz | tar xz --strip-components=1 -C /usr/local/bin k6-v0.49.0-linux-amd64/k6"}).
+		WithExec([]string{"sh", "-c", "curl -LO https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"}).
+		WithExec([]string{"install", "-o", "root", "-g", "root", "-m", "0755", "kubectl", "/usr/local/bin/kubectl"}).
 		WithMountedDirectory("/workspace", source).
 		WithWorkdir("/workspace")
 
@@ -127,23 +125,43 @@ func (m *Goserv) IntegrationTest(
 			WithMountedFile("/root/.kube/config", kubeconfig)
 	}
 
-	// Set environment variables for test scripts
+	// Set up port-forward as a background process and run tests
+	// Use a wrapper script to start port-forward in background and then run tests
+	portForwardCmd := fmt.Sprintf("kubectl port-forward -n %s svc/%s 30303:%s", namespace, serviceName, servicePort)
+	testUrl := "http://localhost:30303"
+
+	// Create a test execution script that sets up port-forward and runs tests
+	testScript := fmt.Sprintf(`#!/bin/bash
+set -e
+
+# Start port-forward in background
+%s &
+PF_PID=$!
+
+# Wait for port-forward to be ready
+echo "Waiting for port-forward to be ready..."
+for i in {1..30}; do
+  if curl -s %s/health > /dev/null 2>&1; then
+    echo "Port-forward is ready"
+    break
+  fi
+  sleep 1
+done
+
+# Run integration tests
+bash /workspace/tests/integration_test.sh %s
+
+# Cleanup
+kill $PF_PID 2>/dev/null || true
+`, portForwardCmd, testUrl, testUrl)
+
 	testContainer = testContainer.
-		WithEnvVariable("TEST_HOST", targetHost).
-		WithEnvVariable("TEST_PORT", targetPort)
+		WithNewFile("/tmp/run_tests.sh", testScript).
+		WithExec([]string{"chmod", "+x", "/tmp/run_tests.sh"})
 
-	// Execute integration test script
-	// Pass arguments based on whether we have full endpoint or separate host/port
-	var execArgs []string
-	if targetPort != "" {
-		execArgs = []string{"bash", "/workspace/tests/integration_test.sh", targetHost, targetPort}
-	} else {
-		// Pass full endpoint as single argument
-		execArgs = []string{"bash", "/workspace/tests/integration_test.sh", targetHost}
-	}
-
+	// Execute the test script
 	testOutput, err := testContainer.
-		WithExec(execArgs).
+		WithExec([]string{"bash", "/tmp/run_tests.sh"}).
 		Stdout(ctx)
 
 	if err != nil {

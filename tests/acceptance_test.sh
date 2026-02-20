@@ -11,11 +11,11 @@
 #   - curl and jq installed
 #
 # Usage:
-#   ./acceptance_test.sh [HOST] [PORT]
+#   ./acceptance_test.sh [BASE_URL]
 #
 # Examples:
-#   ./acceptance_test.sh                    # Uses localhost:8080
-#   ./acceptance_test.sh localhost 8080     # Explicit host and port
+#   ./acceptance_test.sh http://localhost:8080
+#   ./acceptance_test.sh http://myservice.local:80
 ################################################################################
 
 set -e  # Exit on error
@@ -28,9 +28,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-TEST_HOST="${1:-localhost}"
-TEST_PORT="${2:-8080}"
-BASE_URL="http://${TEST_HOST}:${TEST_PORT}"
+BASE_URL="${1}"
 
 # Test counters
 TESTS_RUN=0

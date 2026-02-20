@@ -11,12 +11,11 @@
 #   - goserv application running
 #
 # Usage:
-#   ./performance_test.sh [HOST] [PORT]
+#   ./performance_test.sh [BASE_URL]
 #
 # Examples:
-#   ./performance_test.sh                    # Uses localhost:8080
-#   ./performance_test.sh localhost 8080     # Explicit host and port
-#   ./performance_test.sh myservice.local 80
+#   ./performance_test.sh http://localhost:8080
+#   ./performance_test.sh http://myservice.local:80
 ################################################################################
 
 set -e  # Exit on error
@@ -29,9 +28,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Configuration
-TEST_HOST="${1:-localhost}"
-TEST_PORT="${2:-8080}"
-BASE_URL="http://${TEST_HOST}:${TEST_PORT}"
+BASE_URL="${1}"
 
 # Performance thresholds
 MAX_RESPONSE_TIME=500  # milliseconds
