@@ -31,9 +31,6 @@ func (m *Goserv) Deploy(
 	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
-	// +optional
-	// Delivery context from Deliver function
-	deliveryContext *dagger.File,
 ) (*dagger.File, error) {
 	if helmRepository == "" {
 		helmRepository = "oci://ttl.sh"
@@ -47,33 +44,16 @@ func (m *Goserv) Deploy(
 	releaseName = "goserv"
 	namespace = "goserv"
 
-	if deliveryContext != nil {
-		contextContent, err := deliveryContext.Contents(ctx)
-		if err == nil {
-			var delContext map[string]interface{}
-			if err := json.Unmarshal([]byte(contextContent), &delContext); err == nil {
-				if version, ok := delContext["version"].(string); ok {
-					tag = version
-				}
-				if imgRef, ok := delContext["imageReference"].(string); ok {
-					imageReference = imgRef
-				}
-			}
-		}
+	// Read tag from VERSION file
+	versionContent, err := source.File("VERSION").Contents(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read VERSION file: %w", err)
 	}
+	tag = strings.TrimSpace(versionContent)
 
-	// If tag wasn't in deliveryContext, read from VERSION file
-	if tag == "" {
-		versionContent, err := source.File("VERSION").Contents(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read VERSION file: %w", err)
-		}
-		tag = strings.TrimSpace(versionContent)
-
-		// Append -rc suffix for release candidates
-		if releaseCandidate {
-			tag = tag + "-rc"
-		}
+	// Append -rc suffix for release candidates
+	if releaseCandidate {
+		tag = tag + "-rc"
 	}
 
 	// Construct the chart reference
