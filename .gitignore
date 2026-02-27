@@ -40,3 +40,4 @@ build/
 # Helm
 *.tgz
 
+cicd/privileged/

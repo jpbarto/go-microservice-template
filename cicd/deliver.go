@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"dagger/goserv/internal/cicd"
 	"dagger/goserv/internal/dagger"
 )
 
@@ -16,26 +17,12 @@ func (m *Goserv) Deliver(
 	// Source directory containing the project
 	source *dagger.Directory,
 	// +optional
-	// Container repository (default: ttl.sh)
-	containerRepository string,
-	// +optional
-	// Helm chart repository URL (default: oci://ttl.sh)
-	helmRepository string,
-	// +optional
 	// Pre-built OCI image tarball (if not provided, will build from source)
 	buildArtifact *dagger.File,
 	// +optional
 	// Build as release candidate (appends -rc to version tag)
 	releaseCandidate bool,
 ) (*dagger.File, error) {
-	// Apply defaults
-	if containerRepository == "" {
-		containerRepository = "ttl.sh"
-	}
-	if helmRepository == "" {
-		helmRepository = "oci://ttl.sh"
-	}
-
 	// Read version from VERSION file
 	versionContent, err := source.File("VERSION").Contents(ctx)
 	if err != nil {
@@ -54,18 +41,21 @@ func (m *Goserv) Deliver(
 		return nil, fmt.Errorf("buildArtifact is required; use Build function to create OCI tarball")
 	}
 
-	container := dag.Container().Import(buildArtifact)
-
-	// Publish multi-architecture container to registry
-	imageRef := containerRepository + "/goserv:" + tag
-
-	address, err := container.Publish(ctx, imageRef)
+	// Publish the container image tarball to the injected registry using cicd.ContainerPush.
+	// This reads the registry URL from the injected CONTAINER_REPOSITORY_URL constant.
+	// "latest" is added as an additional tag alongside the versioned tag.
+	address, err := cicd.ContainerPush(ctx, dag, buildArtifact, "goserv", tag, []string{"latest"})
 	if err != nil {
 		return nil, fmt.Errorf("failed to publish container: %w", err)
 	}
 
-	// Package and publish Helm chart
-	_, err = dag.Container().
+	// Split the published image reference (e.g. "registry.example.com/goserv:1.2.3")
+	// into the repository and tag parts for use in the Helm chart values.
+	imageRepository, imageTag, _ := strings.Cut(address, ":")
+
+	// Package the Helm chart and extract the resulting .tgz so it can be passed
+	// to cicd.HelmPush, which handles the push to the injected Helm repository.
+	chartTgz := dag.Container().
 		From("debian:bookworm-slim").
 		WithExec([]string{"apt-get", "update"}).
 		WithExec([]string{"apt-get", "install", "-y", "curl", "gnupg", "apt-transport-https", "wget"}).
@@ -76,28 +66,27 @@ func (m *Goserv) Deliver(
 		WithExec([]string{"sh", "-c", "wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && chmod +x /usr/local/bin/yq"}).
 		WithMountedDirectory("/workspace", source).
 		WithWorkdir("/workspace").
-		WithExec([]string{"yq", "eval", ".image.repository = \"" + containerRepository + "/goserv\"", "-i", "./helm/goserv/values.yaml"}).
-		WithExec([]string{"yq", "eval", ".image.tag = \"" + tag + "\"", "-i", "./helm/goserv/values.yaml"}).
+		WithExec([]string{"yq", "eval", ".image.repository = \"" + imageRepository + "\"", "-i", "./helm/goserv/values.yaml"}).
+		WithExec([]string{"yq", "eval", ".image.tag = \"" + imageTag + "\"", "-i", "./helm/goserv/values.yaml"}).
 		WithExec([]string{"helm", "package", "./helm/goserv", "--version", tag, "--app-version", tag}).
-		WithExec([]string{"helm", "push", "goserv-" + tag + ".tgz", helmRepository + "/charts"}).
-		Stdout(ctx)
+		File("goserv-" + tag + ".tgz")
 
+	// Push the packaged chart using cicd.HelmPush.
+	// This reads the repository URL from the injected HELM_REPOSITORY_URL constant
+	// and returns the fully-qualified chart reference.
+	chartRef, err := cicd.HelmPush(ctx, dag, chartTgz)
 	if err != nil {
 		return nil, fmt.Errorf("failed to publish Helm chart: %w", err)
 	}
 
-	chartRef := helmRepository + "/charts/goserv:" + tag
-
 	// Create delivery context JSON
 	deliveryContext := map[string]interface{}{
-		"timestamp":           time.Now().Format(time.RFC3339),
-		"imageReference":      address,
-		"chartReference":      chartRef,
-		"version":             tag,
-		"containerRepository": containerRepository,
-		"helmRepository":      helmRepository,
-		"releaseCandidate":    releaseCandidate,
-		"architectures":       []string{"linux/amd64", "linux/arm64"},
+		"timestamp":        time.Now().Format(time.RFC3339),
+		"imageReference":   address,
+		"chartReference":   chartRef,
+		"version":          tag,
+		"releaseCandidate": releaseCandidate,
+		"architectures":    []string{"linux/amd64", "linux/arm64"},
 	}
 
 	contextJSON, err := json.MarshalIndent(deliveryContext, "", "  ")
