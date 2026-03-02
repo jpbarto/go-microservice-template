@@ -73,17 +73,7 @@ func (m *Goserv) Validate(
 	// -----------------------------------------------------------------------
 	// 1. Helm release status & version
 	// -----------------------------------------------------------------------
-	kubeconfig, err := cicd.GetKubeconfigSecret(ctx, dag)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get kubeconfig: %w", err)
-	}
-
-	helmStatusJSON, err := dag.Container().
-		From("alpine/helm:latest").
-		WithMountedSecret("/tmp/kubeconfig", kubeconfig, dagger.ContainerWithMountedSecretOpts{Mode: 0444}).
-		WithEnvVariable("KUBECONFIG", "/tmp/kubeconfig").
-		WithExec([]string{"helm", "status", releaseName, "-n", namespace, "-o", "json"}).
-		Stdout(ctx)
+	helmStatusJSON, err := cicd.HelmStatus(ctx, dag, releaseName, namespace)
 	if err != nil {
 		fail("Helm release exists and is deployed", fmt.Sprintf("helm status failed: %s", err))
 	} else {
@@ -97,123 +87,287 @@ func (m *Goserv) Validate(
 				}
 			}
 		}
-
-		// version check via helm list
-		if expectedVersion != "" {
-			helmListJSON, err := dag.Container().
-				From("alpine/helm:latest").
-				WithMountedSecret("/tmp/kubeconfig", kubeconfig, dagger.ContainerWithMountedSecretOpts{Mode: 0444}).
-				WithEnvVariable("KUBECONFIG", "/tmp/kubeconfig").
-				WithExec([]string{"helm", "list", "-n", namespace, "-o", "json"}).
-				Stdout(ctx)
-			if err == nil {
-				var releases []map[string]interface{}
-				if json.Unmarshal([]byte(helmListJSON), &releases) == nil {
-					for _, r := range releases {
-						if r["name"] == releaseName {
-							chartField, _ := r["chart"].(string)
-							// chart field is e.g. "goserv-1.2.3"
-							chartVersion := strings.TrimPrefix(chartField, releaseName+"-")
-							if chartVersion == expectedVersion {
-								pass("Helm chart version matches expected (" + expectedVersion + ")")
-							} else {
-								fail("Helm chart version matches expected ("+expectedVersion+")", "deployed version is: "+chartVersion)
-							}
-							break
-						}
-					}
-				}
-			}
-		}
 	}
 
-	// -----------------------------------------------------------------------
-	// 2. Deployment ready replicas
-	// -----------------------------------------------------------------------
-	deployJSON, err := cicd.KubectlGet(ctx, dag, namespace, "deployment/"+releaseName)
-	if err != nil {
-		fail("Deployment exists", err.Error())
-	} else {
-		pass("Deployment exists")
-		var deploy map[string]interface{}
-		if json.Unmarshal([]byte(deployJSON), &deploy) == nil {
-			spec, _ := deploy["spec"].(map[string]interface{})
-			status, _ := deploy["status"].(map[string]interface{})
-			desired := int(jsonFloat(spec, "replicas"))
-			ready := int(jsonFloat(status, "readyReplicas"))
-			if ready > 0 && ready == desired {
-				pass(fmt.Sprintf("Deployment has correct number of ready replicas (%d/%d)", ready, desired))
-			} else {
-				fail("Deployment has correct number of ready replicas",
-					fmt.Sprintf("ready: %d, desired: %d", ready, desired))
-			}
-		}
-	}
-
-	// -----------------------------------------------------------------------
-	// 3. Pods running and ready
-	// -----------------------------------------------------------------------
-	// Use a label selector via the pods resource with -l flag; KubectlGet uses
-	// -o json which returns a List when given a resource type without a name.
-	podsJSON, err := cicd.KubectlGet(ctx, dag, namespace,
-		"pods -l app.kubernetes.io/name=goserv,app.kubernetes.io/instance="+releaseName)
-	if err != nil {
-		fail("Pods exist", err.Error())
-	} else {
-		var podList map[string]interface{}
-		if json.Unmarshal([]byte(podsJSON), &podList) != nil {
-			fail("Pods exist", "failed to parse pod list JSON")
+	// version check via helm list
+	if expectedVersion != "" {
+		helmListJSON, err := cicd.HelmList(ctx, dag, namespace)
+		if err != nil {
+			fail("Helm chart version matches expected ("+expectedVersion+")",
+				fmt.Sprintf("helm list failed: %s", err))
 		} else {
-			items, _ := podList["items"].([]interface{})
-			if len(items) == 0 {
-				fail("Pods exist", "no pods found with label app.kubernetes.io/instance="+releaseName)
-			} else {
-				pass(fmt.Sprintf("Pods exist (%d found)", len(items)))
-				allRunning, allReady := true, true
-				for _, item := range items {
-					pod, _ := item.(map[string]interface{})
-					meta, _ := pod["metadata"].(map[string]interface{})
-					podName, _ := meta["name"].(string)
-					podStatus, _ := pod["status"].(map[string]interface{})
-					phase, _ := podStatus["phase"].(string)
-					if phase != "Running" {
-						allRunning = false
-						fail("Pod "+podName+" is Running", "phase is: "+phase)
-					}
-					conditions, _ := podStatus["conditions"].([]interface{})
-					ready := false
-					for _, c := range conditions {
-						cond, _ := c.(map[string]interface{})
-						if cond["type"] == "Ready" && cond["status"] == "True" {
-							ready = true
+			var releases []map[string]interface{}
+			if json.Unmarshal([]byte(helmListJSON), &releases) == nil {
+				found := false
+				for _, r := range releases {
+					if r["name"] == releaseName {
+						found = true
+						chartField, _ := r["chart"].(string)
+						// chart field is e.g. "goserv-1.2.3"
+						chartVersion := strings.TrimPrefix(chartField, releaseName+"-")
+						if chartVersion == expectedVersion {
+							pass("Helm chart version matches expected (" + expectedVersion + ")")
+						} else {
+							fail("Helm chart version matches expected ("+expectedVersion+")",
+								"deployed version is: "+chartVersion)
 						}
-					}
-					if !ready {
-						allReady = false
-						fail("Pod "+podName+" is Ready", "Ready condition is not True")
+						break
 					}
 				}
-				if allRunning {
-					pass("All pods are Running")
-				}
-				if allReady {
-					pass("All pods are Ready")
+				if !found {
+					fail("Helm chart version matches expected ("+expectedVersion+")",
+						"release "+releaseName+" not found in helm list output")
 				}
 			}
 		}
+	}
+
+	// -----------------------------------------------------------------------
+	// 2–4. Fetch all namespace resources in one call
+	// -----------------------------------------------------------------------
+	allJSON, err := cicd.KubectlGetAll(ctx, dag, namespace)
+
+	// Helper: extract items from the KubectlGetAll response by kind.
+	itemsByKind := func(kind string) []map[string]interface{} {
+		if err != nil || allJSON == "" {
+			return nil
+		}
+		var list map[string]interface{}
+		if json.Unmarshal([]byte(allJSON), &list) != nil {
+			return nil
+		}
+		items, _ := list["items"].([]interface{})
+		var out []map[string]interface{}
+		for _, item := range items {
+			obj, _ := item.(map[string]interface{})
+			if obj == nil {
+				continue
+			}
+			if k, _ := obj["kind"].(string); k == kind {
+				out = append(out, obj)
+			}
+		}
+		return out
+	}
+
+	// Helper: find a single resource by kind + metadata.name.
+	findResource := func(kind, name string) map[string]interface{} {
+		for _, obj := range itemsByKind(kind) {
+			meta, _ := obj["metadata"].(map[string]interface{})
+			if n, _ := meta["name"].(string); n == name {
+				return obj
+			}
+		}
+		return nil
+	}
+
+	if err != nil {
+		fail("Fetch namespace resources", err.Error())
+	}
+
+	// -----------------------------------------------------------------------
+	// 2. Deployment ready replicas (retry up to 60s, checking every 10s)
+	// -----------------------------------------------------------------------
+	const deployReadyTimeout = 60 * time.Second
+	const deployReadyInterval = 10 * time.Second
+
+	deployCheckStart := time.Now()
+	for {
+		currentAllJSON, fetchErr := cicd.KubectlGetAll(ctx, dag, namespace)
+
+		currentFindResource := func(kind, name string) map[string]interface{} {
+			if fetchErr != nil || currentAllJSON == "" {
+				return nil
+			}
+			var list map[string]interface{}
+			if json.Unmarshal([]byte(currentAllJSON), &list) != nil {
+				return nil
+			}
+			items, _ := list["items"].([]interface{})
+			for _, item := range items {
+				obj, _ := item.(map[string]interface{})
+				if obj == nil {
+					continue
+				}
+				if k, _ := obj["kind"].(string); k != kind {
+					continue
+				}
+				meta, _ := obj["metadata"].(map[string]interface{})
+				if n, _ := meta["name"].(string); n == name {
+					return obj
+				}
+			}
+			return nil
+		}
+
+		deploy := currentFindResource("Deployment", releaseName)
+		if deploy == nil {
+			if time.Since(deployCheckStart) >= deployReadyTimeout {
+				fail("Deployment exists", "Deployment '"+releaseName+"' not found in namespace '"+namespace+"' after 60s")
+				break
+			}
+			fmt.Printf("Deployment '%s' not found yet, retrying in %s...\n", releaseName, deployReadyInterval)
+			time.Sleep(deployReadyInterval)
+			continue
+		}
+
+		spec, _ := deploy["spec"].(map[string]interface{})
+		status, _ := deploy["status"].(map[string]interface{})
+		desired := int(jsonFloat(spec, "replicas"))
+		ready := int(jsonFloat(status, "readyReplicas"))
+
+		if ready > 0 && ready == desired {
+			pass("Deployment exists")
+			pass(fmt.Sprintf("Deployment has correct number of ready replicas (%d/%d)", ready, desired))
+			break
+		}
+
+		if time.Since(deployCheckStart) >= deployReadyTimeout {
+			pass("Deployment exists")
+			fail("Deployment has correct number of ready replicas",
+				fmt.Sprintf("timed out after 60s: ready: %d, desired: %d", ready, desired))
+			break
+		}
+
+		fmt.Printf("Deployment not yet ready (%d/%d replicas), waiting %s (%.0fs elapsed)...\n",
+			ready, desired, deployReadyInterval, time.Since(deployCheckStart).Seconds())
+		time.Sleep(deployReadyInterval)
+	}
+
+	// -----------------------------------------------------------------------
+	// 3. Pods running and ready (retry up to 60s, checking every 10s)
+	// -----------------------------------------------------------------------
+	const podReadyTimeout = 60 * time.Second
+	const podReadyInterval = 10 * time.Second
+
+	var matchingPods []map[string]interface{}
+	podCheckStart := time.Now()
+	for {
+		// Re-fetch namespace resources so we get the latest pod status
+		currentAllJSON, fetchErr := cicd.KubectlGetAll(ctx, dag, namespace)
+
+		currentItemsByKind := func(kind string) []map[string]interface{} {
+			if fetchErr != nil || currentAllJSON == "" {
+				return nil
+			}
+			var list map[string]interface{}
+			if json.Unmarshal([]byte(currentAllJSON), &list) != nil {
+				return nil
+			}
+			items, _ := list["items"].([]interface{})
+			var out []map[string]interface{}
+			for _, item := range items {
+				obj, _ := item.(map[string]interface{})
+				if obj == nil {
+					continue
+				}
+				if k, _ := obj["kind"].(string); k == kind {
+					out = append(out, obj)
+				}
+			}
+			return out
+		}
+
+		matchingPods = nil
+		for _, pod := range currentItemsByKind("Pod") {
+			meta, _ := pod["metadata"].(map[string]interface{})
+			labels, _ := meta["labels"].(map[string]interface{})
+			appName, _ := labels["app.kubernetes.io/name"].(string)
+			appInstance, _ := labels["app.kubernetes.io/instance"].(string)
+			if appName == "goserv" && appInstance == releaseName {
+				matchingPods = append(matchingPods, pod)
+			}
+		}
+
+		if len(matchingPods) == 0 {
+			if time.Since(podCheckStart) >= podReadyTimeout {
+				fail("Pods exist", "no pods found with label app.kubernetes.io/instance="+releaseName)
+				break
+			}
+			fmt.Printf("No matching pods found yet, retrying in %s...\n", podReadyInterval)
+			time.Sleep(podReadyInterval)
+			continue
+		}
+
+		// Check whether all matching pods are ready
+		allReady := true
+		for _, pod := range matchingPods {
+			meta, _ := pod["metadata"].(map[string]interface{})
+			podName, _ := meta["name"].(string)
+			podStatus, _ := pod["status"].(map[string]interface{})
+			conditions, _ := podStatus["conditions"].([]interface{})
+			readyCond := false
+			for _, c := range conditions {
+				cond, _ := c.(map[string]interface{})
+				if cond["type"] == "Ready" && cond["status"] == "True" {
+					readyCond = true
+				}
+			}
+			if !readyCond {
+				allReady = false
+				fmt.Printf("Pod %s is not yet Ready, will retry...\n", podName)
+			}
+		}
+
+		if allReady {
+			pass(fmt.Sprintf("Pods exist (%d found)", len(matchingPods)))
+			allRunning := true
+			for _, pod := range matchingPods {
+				meta, _ := pod["metadata"].(map[string]interface{})
+				podName, _ := meta["name"].(string)
+				podStatus, _ := pod["status"].(map[string]interface{})
+				phase, _ := podStatus["phase"].(string)
+				if phase != "Running" {
+					allRunning = false
+					fail("Pod "+podName+" is Running", "phase is: "+phase)
+				}
+			}
+			if allRunning {
+				pass("All pods are Running")
+			}
+			pass("All pods are Ready")
+			break
+		}
+
+		if time.Since(podCheckStart) >= podReadyTimeout {
+			pass(fmt.Sprintf("Pods exist (%d found)", len(matchingPods)))
+			for _, pod := range matchingPods {
+				meta, _ := pod["metadata"].(map[string]interface{})
+				podName, _ := meta["name"].(string)
+				podStatus, _ := pod["status"].(map[string]interface{})
+				conditions, _ := podStatus["conditions"].([]interface{})
+				readyCond := false
+				for _, c := range conditions {
+					cond, _ := c.(map[string]interface{})
+					if cond["type"] == "Ready" && cond["status"] == "True" {
+						readyCond = true
+					}
+				}
+				if !readyCond {
+					fail("Pod "+podName+" is Ready", "timed out after 60s waiting for Ready condition")
+				}
+			}
+			break
+		}
+
+		fmt.Printf("Not all pods are ready, waiting %s before retrying (%.0fs elapsed)...\n",
+			podReadyInterval, time.Since(podCheckStart).Seconds())
+		time.Sleep(podReadyInterval)
 	}
 
 	// -----------------------------------------------------------------------
 	// 4. Service exists and has endpoints
 	// -----------------------------------------------------------------------
-	_, err = cicd.KubectlGet(ctx, dag, namespace, "svc/"+releaseName)
-	if err != nil {
-		fail("Service exists", err.Error())
+	svc := findResource("Service", releaseName)
+	if svc == nil {
+		fail("Service exists", "Service '"+releaseName+"' not found in namespace '"+namespace+"'")
 	} else {
 		pass("Service exists")
-		epJSON, err := cicd.KubectlGet(ctx, dag, namespace, "endpoints/"+releaseName)
-		if err != nil {
-			fail("Service has endpoints", err.Error())
+		// `kubectl get all` does not return Endpoints objects, so use KubectlGet
+		// for the endpoints specifically.
+		epJSON, epErr := cicd.KubectlGet(ctx, dag, namespace, "endpoints/"+releaseName)
+		if epErr != nil {
+			fail("Service has endpoints", epErr.Error())
 		} else {
 			var ep map[string]interface{}
 			epCount := 0
@@ -241,11 +395,18 @@ func (m *Goserv) Validate(
 	if err != nil {
 		fail("Port-forward to service", err.Error())
 	} else {
+		// Eagerly start the service so Dagger confirms it is healthy before
+		// we send any HTTP requests.
+		startedSvc, startErr := portForwardSvc.Start(ctx)
+		if startErr != nil {
+			fail("Port-forward to service", fmt.Sprintf("service start failed: %s", startErr))
+			goto afterHTTP
+		}
 		pass("Port-forward to service")
 
 		curlBase := dag.Container().
 			From("curlimages/curl:latest").
-			WithServiceBinding("app", portForwardSvc)
+			WithServiceBinding("app", startedSvc)
 
 		httpChecks := []struct {
 			path        string
@@ -349,22 +510,20 @@ func (m *Goserv) Validate(
 				fail(checkName, "got HTTP "+code)
 			}
 		}
+
+		// Explicitly stop the port-forward service so kubectl port-forward
+		// terminates and Dagger can release the container.
+		_, _ = startedSvc.Stop(ctx)
 	}
+afterHTTP:
 
 	// -----------------------------------------------------------------------
 	// 6. Pod log error scan
 	// -----------------------------------------------------------------------
-	// Resolve the first matching pod name from the list fetched in step 3.
 	firstPod := ""
-	if podsJSON != "" {
-		var podList map[string]interface{}
-		if json.Unmarshal([]byte(podsJSON), &podList) == nil {
-			if items, ok := podList["items"].([]interface{}); ok && len(items) > 0 {
-				pod, _ := items[0].(map[string]interface{})
-				meta, _ := pod["metadata"].(map[string]interface{})
-				firstPod, _ = meta["name"].(string)
-			}
-		}
+	if len(matchingPods) > 0 {
+		meta, _ := matchingPods[0]["metadata"].(map[string]interface{})
+		firstPod, _ = meta["name"].(string)
 	}
 	if firstPod == "" {
 		fail("Pod logs are accessible", "could not resolve a pod name")

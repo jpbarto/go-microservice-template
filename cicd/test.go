@@ -57,11 +57,6 @@ func (m *Goserv) IntegrationTest(
 	ctx context.Context,
 	// Source directory containing the project
 	source *dagger.Directory,
-	// Kubernetes config file content
-	kubeconfig *dagger.File,
-	// +optional
-	// AWS configuration for accessing private registries
-	awsconfig *dagger.Secret,
 	// +optional
 	// Deployment context from Deploy function
 	deploymentContext *dagger.File,
@@ -118,12 +113,6 @@ func (m *Goserv) IntegrationTest(
 		WithExec([]string{"install", "-o", "root", "-g", "root", "-m", "0755", "kubectl", "/usr/local/bin/kubectl"}).
 		WithMountedDirectory("/workspace", source).
 		WithWorkdir("/workspace")
-
-	// Mount kubeconfig if provided for accessing deployed services
-	if kubeconfig != nil {
-		testContainer = testContainer.
-			WithMountedFile("/root/.kube/config", kubeconfig)
-	}
 
 	// Set up port-forward as a background process and run tests
 	// Use a wrapper script to start port-forward in background and then run tests

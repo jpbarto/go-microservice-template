@@ -52,7 +52,7 @@ func (m *Goserv) Deploy(
 	}
 
 	// Construct the chart reference
-	chartRef := helmRepository + "/charts/goserv:" + tag
+	chartRef := helmRepository + "/goserv:" + tag
 
 	// Use the privileged HelmUpgrade function to deploy to the Kubernetes cluster.
 	// This delegates helm execution to the pre-built privileged wrapper which uses
