@@ -40,5 +40,4 @@ build/
 # Helm
 *.tgz
 
-cicd/internal
 *.gen.go
